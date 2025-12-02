@@ -1,5 +1,5 @@
 // AnimeKai Scraper for Nuvio Local Scrapers
-// FIXED VERSION: Supports Movies & TV, Fixes Cloudflare Blocks
+// FIXED VERSION: Movies + TV, Subtitles (M3U8/API), Cloudflare Bypass
 
 // TMDB API Configuration
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
@@ -7,7 +7,7 @@ const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // CONFIGURATION - FIXED
 // ---------------------
-// We use 'anikai.to' as it is the currently active mirror used by the Kotlin app.
+// We use 'anikai.to' as it is the currently active mirror.
 const BASE_DOMAIN = 'https://anikai.to'; 
 
 // CRITICAL FIX: Matched User-Agent to the working Kotlin source [source: 48]
@@ -67,13 +67,12 @@ function parseHtmlViaApi(html) {
       .then(function(json) { return json.result; });
 }
 
+// FIX: Improved MegaUp logic with strict subtitle filtering
 function decryptMegaMedia(embedUrl) {
-    // FIX: More robust URL replacement to handle variations in embed links
     var mediaUrl;
     if (embedUrl.indexOf('/e/') !== -1) {
         mediaUrl = embedUrl.replace('/e/', '/media/');
     } else {
-        // Fallback: append mode=media if structure is unknown
         mediaUrl = embedUrl + (embedUrl.indexOf('?') === -1 ? '?' : '&') + 'mode=media';
     }
 
@@ -87,7 +86,39 @@ function decryptMegaMedia(embedUrl) {
                 body: JSON.stringify({ text: encrypted, agent: HEADERS['User-Agent'] })
             }).then(function(res) { return res.json(); });
         })
-        .then(function(json) { return json.result; });
+        .then(function(json) {
+            var result = json.result;
+            
+            // Extract sources
+            var srcs = [];
+            if (result && result.sources) {
+                for (var i = 0; i < result.sources.length; i++) {
+                    var s = result.sources[i];
+                    srcs.push({ 
+                        url: s.file, 
+                        quality: extractQualityFromUrl(s.file) 
+                    });
+                }
+            }
+
+            // FILTER SUBTITLES (Strict filter matching Kotlin)
+            var subs = [];
+            if (result && result.tracks) {
+                subs = result.tracks
+                    .filter(function(t) { 
+                        return t.kind === 'captions' && (t.file.indexOf('.vtt') !== -1 || t.file.indexOf('.srt') !== -1);
+                    })
+                    .map(function(t) {
+                        return { 
+                            language: t.label || 'English', 
+                            url: t.file, 
+                            lang: t.label || 'English'
+                        };
+                    });
+            }
+            
+            return { streams: srcs, subtitles: subs };
+        });
 }
 
 // Debug helpers
@@ -105,9 +136,8 @@ function logRid(rid, msg, extra) {
     } catch(e) {}
 }
 
-// --- Search Logic (Updated for Movies) ---
+// --- Search Logic (Movies + TV) ---
 
-// Kitsu Search - Helps find the correct English/Romaji title
 function searchKitsu(animeTitle) {
     const searchUrl = KITSU_BASE_URL + '/anime?filter[text]=' + encodeURIComponent(animeTitle);
     return fetchRequest(searchUrl, { headers: KITSU_HEADERS })
@@ -123,11 +153,11 @@ function searchKitsu(animeTitle) {
         });
 }
 
-// FIX: Added 'type' parameter (tv or movie) to filter results on the site
+// FIX: Added 'type' parameter
 function searchAnimeByName(animeName, type) {
     var searchUrl = BASE_DOMAIN + '/browser?keyword=' + encodeURIComponent(animeName);
     
-    // Kotlin code adds "&type[]=movie" or "&type[]=tv"
+    // Add Kotlin-style filter
     if (type === 'movie') {
         searchUrl += '&type[]=movie';
     } else {
@@ -161,7 +191,6 @@ function getAccurateAnimeKaiEntry(animeTitle, season, episode, tmdbId, type) {
             var kitsuEntry = kitsuResults[0];
             var kitsuTitle = kitsuEntry.attributes.titles && kitsuEntry.attributes.titles.en ||
                             kitsuEntry.attributes.canonicalTitle;
-            // Search with the better title and the correct type
             return searchAnimeByName(kitsuTitle, type).then(function(animeKaiResults) {
                 return pickResult(animeKaiResults, type, season, tmdbId);
             });
@@ -176,16 +205,15 @@ function getAccurateAnimeKaiEntry(animeTitle, season, episode, tmdbId, type) {
     });
 }
 
-// FIX: Updated selection logic to handle Movies separately
 function pickResult(results, mediaType, season, tmdbId) {
     if (!results || results.length === 0) return Promise.resolve(null);
     
-    // If it's a movie, we trust the "type=movie" filter and pick the first relevant result
+    // For movies, accept first match
     if (mediaType === 'movie') {
         return Promise.resolve(results[0]);
     }
 
-    // --- TV Show Logic (Season Matching) ---
+    // TV Season Logic
     if (!season || !Number.isFinite(season)) return Promise.resolve(results[0]);
 
     var seasonStr = String(season);
@@ -209,11 +237,8 @@ function pickResult(results, mediaType, season, tmdbId) {
         }
     }
 
-    // Use TMDB episode count to verify correct season
     if (tmdbId && season > 1) {
         return getTMDBSeasonInfo(tmdbId, season).then(function(seasonInfo) {
-            // Since we can't easily get episode count from search results without parsing each page,
-            // we rely on the candidates found above.
             if (candidates.length > 0) return candidates.sort(function(a,b){ return b.score - a.score; })[0].r;
             return results[0];
         }).catch(function() {
@@ -225,7 +250,7 @@ function pickResult(results, mediaType, season, tmdbId) {
     return Promise.resolve(candidates.length > 0 ? candidates.sort(function(a,b){ return b.score - a.score; })[0].r : results[0]);
 }
 
-// --- Quality & M3U8 Logic ---
+// --- Quality & M3U8 Logic (With Subtitles) ---
 
 function extractQualityFromUrl(url) {
     var patterns = [
@@ -242,87 +267,88 @@ function extractQualityFromUrl(url) {
     return 'Unknown';
 }
 
-function parseM3U8Master(content, baseUrl) {
-    var lines = content.split('\n');
-    var streams = [];
-    var current = null;
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line) continue;
-        if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
-            current = { bandwidth: null, resolution: null, url: null };
-            var bw = line.match(/BANDWIDTH=(\d+)/);
-            if (bw) current.bandwidth = parseInt(bw[1]);
-            var res = line.match(/RESOLUTION=(\d+x\d+)/);
-            if (res) current.resolution = res[1];
-        } else if (current && line[0] !== '#') {
-            current.url = resolveUrlRelative(line, baseUrl);
-            streams.push(current);
-            current = null;
-        }
-    }
-    return streams;
-}
-
 function resolveUrlRelative(url, baseUrl) {
     if (url.indexOf('http') === 0) return url;
     try { return new URL(url, baseUrl).toString(); } catch (e) { return url; }
 }
 
-function qualityFromResolutionOrBandwidth(stream) {
-    if (stream && stream.resolution) {
-        var h = parseInt(String(stream.resolution).split('x')[1]);
-        if (h >= 1080) return '1080p';
-        if (h >= 720) return '720p';
-        if (h >= 480) return '480p';
-        if (h >= 360) return '360p';
-        return '240p';
-    }
-    if (stream && stream.bandwidth) {
-        var mbps = stream.bandwidth / 1000000;
-        if (mbps >= 5) return '1080p';
-        if (mbps >= 3) return '720p';
-        if (mbps >= 1.5) return '480p';
-        return '360p';
-    }
-    return 'Unknown';
-}
-
+// FIX: Extracts BOTH streams and subtitles from master playlist
 function resolveM3U8(url, serverType) {
-    return fetchRequest(url, { headers: Object.assign({}, HEADERS, { 'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,application/octet-stream,*/*' }) })
+    return fetchRequest(url, { headers: Object.assign({}, HEADERS, { 'Accept': '*/*' }) })
         .then(function(res) { return res.text(); })
         .then(function(content) {
-            if (content.indexOf('#EXT-X-STREAM-INF') !== -1) {
-                var variants = parseM3U8Master(content, url);
-                var out = [];
-                for (var i = 0; i < variants.length; i++) {
-                    var q = qualityFromResolutionOrBandwidth(variants[i]);
-                    out.push({ url: variants[i].url, quality: q, serverType: serverType });
+            var streams = [];
+            var subtitles = [];
+
+            if (content.indexOf('#EXT-X-STREAM-INF') !== -1 || content.indexOf('#EXT-X-MEDIA') !== -1) {
+                var lines = content.split('\n');
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim();
+                    
+                    // 1. Video Streams
+                    if (line.indexOf('#EXT-X-STREAM-INF') === 0 && lines[i+1]) {
+                        var resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+                        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+                        var q = 'Unknown';
+                        
+                        if (resMatch) q = resMatch[1] + 'p';
+                        else if (bwMatch) {
+                            var mbps = parseInt(bwMatch[1]) / 1000000;
+                            if (mbps >= 4) q = '1080p';
+                            else if (mbps >= 2.5) q = '720p';
+                            else if (mbps >= 1) q = '480p';
+                            else q = '360p';
+                        }
+
+                        var u = lines[i+1].trim();
+                        if (u && u.indexOf('#') !== 0) {
+                            if (u.indexOf('http') !== 0) u = resolveUrlRelative(u, url);
+                            streams.push({ url: u, quality: q, serverType: serverType });
+                        }
+                    }
+                    
+                    // 2. Subtitles inside M3U8
+                    if (line.indexOf('#EXT-X-MEDIA:TYPE=SUBTITLES') === 0) {
+                        var uriMatch = line.match(/URI="([^"]+)"/);
+                        var nameMatch = line.match(/NAME="([^"]+)"/);
+                        var langMatch = line.match(/LANGUAGE="([^"]+)"/);
+                        
+                        if (uriMatch) {
+                            var subUrl = resolveUrlRelative(uriMatch[1], url);
+                            var label = (nameMatch ? nameMatch[1] : null) || (langMatch ? langMatch[1] : 'Unknown');
+                            subtitles.push({
+                                url: subUrl,
+                                language: label,
+                                lang: label
+                            });
+                        }
+                    }
                 }
-                return { success: true, streams: out };
+                return { success: true, streams: streams, subtitles: subtitles };
             }
-            if (content.indexOf('#EXTINF:') !== -1) {
-                return { success: true, streams: [{ url: url, quality: 'Unknown', serverType: serverType }] };
-            }
-            throw new Error('Invalid M3U8');
+            
+            // Fallback for simple m3u8
+            return { success: true, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] };
         })
-        .catch(function(){ return { success: false, streams: [{ url: url, quality: 'Unknown', serverType: serverType }] }; });
+        .catch(function(){ return { success: false, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] }; });
 }
 
 function resolveMultipleM3U8(m3u8Links) {
     var promises = m3u8Links.map(function(link){ return resolveM3U8(link.url, link.serverType); });
     return Promise.allSettled(promises).then(function(results){
-        var out = [];
+        var outStreams = [];
+        var outSubs = [];
         for (var i = 0; i < results.length; i++) {
-            if (results[i].status === 'fulfilled' && results[i].value && results[i].value.streams) {
-                out = out.concat(results[i].value.streams);
+            if (results[i].status === 'fulfilled' && results[i].value) {
+                if (results[i].value.streams) outStreams = outStreams.concat(results[i].value.streams);
+                if (results[i].value.subtitles) outSubs = outSubs.concat(results[i].value.subtitles);
             }
         }
-        return out;
+        return { streams: outStreams, subtitles: outSubs };
     });
 }
 
-// --- Metadata Formatting ---
+// --- Metadata & Formatting ---
 
 function buildMediaTitle(info, mediaType, season, episode, episodeInfo) {
     if (episodeInfo && episodeInfo.seasonName) {
@@ -486,25 +512,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
                 return parseHtmlViaApi(episodesResp.result);
             })
             .then(function(episodes) {
-                // Find episode token
-                // Movies often have episode ID '1' or the only available ID
                 var keys = Object.keys(episodes || {}).sort(function(a,b){ return parseInt(a) - parseInt(b); });
                 if (keys.length === 0) throw new Error('No episodes');
                 
                 var epStr = String(targetEpisode);
-                
-                // Try to find exact episode match
-                // Note: The structure is episodes[season?][episode?] or flat depending on show
-                // We'll iterate to find the token
-                
-                // Helper to search deep in the object for the specific episode number
                 var foundToken = null;
                 
-                // Strategy 1: Direct lookup (common structure: { "1": { "1": { token: ... } } })
-                // The API usually returns episodes grouped by some ID.
-                // We look for a nested object that has the episode number as a key.
-                
-                // Loop through outer keys (usually groups/seasons)
+                // Find Token Logic
+                // 1. Try direct match
                 for (var k in episodes) {
                     if (episodes[k][epStr] && episodes[k][epStr].token) {
                         foundToken = episodes[k][epStr].token;
@@ -513,9 +528,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     }
                 }
                 
-                // Strategy 2: If movie, just take the first available token
+                // 2. Fallback for Movies (first available)
                 if (!foundToken && mediaType === 'movie') {
-                    // Just take the first thing we find
                     var firstOuter = keys[0];
                     var innerKeys = Object.keys(episodes[firstOuter] || {});
                     if (innerKeys.length > 0) {
@@ -546,28 +560,16 @@ function getStreams(tmdbId, mediaType, season, episode) {
                             .then(function(embedResp) { return decryptKai(embedResp.result); })
                             .then(function(decrypted) {
                                 if (decrypted && decrypted.url) {
-                                    return decryptMegaMedia(decrypted.url)
-                                        .then(function(mediaData) {
-                                            var srcs = [];
-                                            if (mediaData && mediaData.sources) {
-                                                for (var i = 0; i < mediaData.sources.length; i++) {
-                                                    var src = mediaData.sources[i];
-                                                    if (src && src.file) {
-                                                        srcs.push({
-                                                            url: src.file,
-                                                            quality: extractQualityFromUrl(src.file),
-                                                            serverType: serverType
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                            return {
-                                                streams: srcs,
-                                                subtitles: (mediaData && mediaData.tracks) ? mediaData.tracks.filter(function(t){ return t.kind === 'captions'; }).map(function(t){ return { language: t.label || 'Unknown', url: t.file, default: !!t.default }; }) : []
-                                            };
-                                        });
+                                    return decryptMegaMedia(decrypted.url);
                                 }
                                 return { streams: [], subtitles: [] };
+                            })
+                            .then(function(decryptedData) {
+                                // Add serverType to streams
+                                if (decryptedData.streams) {
+                                    decryptedData.streams.forEach(function(s) { s.serverType = serverType; });
+                                }
+                                return decryptedData;
                             })
                             .catch(function(){ return { streams: [], subtitles: [] }; });
                         serverPromises.push(p);
@@ -576,31 +578,37 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
                 return Promise.allSettled(serverPromises).then(function(results) {
                     var allStreams = [];
-                    var allSubs = [];
+                    var apiSubs = [];
+
                     for (var i = 0; i < results.length; i++) {
                         if (results[i].status === 'fulfilled') {
                             var val = results[i].value || { streams: [], subtitles: [] };
                             allStreams = allStreams.concat(val.streams || []);
-                            allSubs = allSubs.concat(val.subtitles || []);
+                            apiSubs = apiSubs.concat(val.subtitles || []);
                         }
                     }
+
                     var m3u8Links = allStreams.filter(function(s){ return s && s.url && s.url.indexOf('.m3u8') !== -1; });
                     var directLinks = allStreams.filter(function(s){ return !(s && s.url && s.url.indexOf('.m3u8') !== -1); });
 
-                    return resolveMultipleM3U8(m3u8Links).then(function(resolved) {
-                        var combined = directLinks.concat(resolved);
-                        // Dedupe subs
+                    return resolveMultipleM3U8(m3u8Links).then(function(resolutionResult) {
+                        var combinedStreams = directLinks.concat(resolutionResult.streams);
+                        var combinedSubs = apiSubs.concat(resolutionResult.subtitles);
+
+                        // Deduplicate subs
                         var uniqueSubs = [];
                         var seen = {};
-                        for (var j = 0; j < allSubs.length; j++) {
-                            var su = allSubs[j];
-                            if (su && su.url && !seen[su.url]) { seen[su.url] = true; uniqueSubs.push(su); }
+                        for (var j = 0; j < combinedSubs.length; j++) {
+                            var su = combinedSubs[j];
+                            if (su && su.url && !seen[su.url]) { 
+                                seen[su.url] = true; 
+                                uniqueSubs.push(su); 
+                            }
                         }
                         
                         var mediaTitle = buildMediaTitle(mediaInfo, mediaType, targetSeason, targetEpisode, result.episodeInfo);
-                        var formatted = formatToNuvioStreams({ streams: combined, subtitles: uniqueSubs }, mediaTitle);
+                        var formatted = formatToNuvioStreams({ streams: combinedStreams, subtitles: uniqueSubs }, mediaTitle);
                         
-                        // Rough Sort
                         var order = { '1080p': 5, '720p': 4, '480p': 3, '360p': 2, '240p': 1, 'Unknown': 0 };
                         formatted.sort(function(a, b) { return (order[b.quality] || 0) - (order[a.quality] || 0); });
                         return formatted;
