@@ -1,19 +1,36 @@
-// AnimeKai Scraper for Nuvio Local Scrapers (FIXED)
-// React Native compatible (Promise chain only)
+// AnimeKai Scraper for Nuvio Local Scrapers
+// FIXED VERSION: Matches working Kotlin implementation (User-Agent + Referer fix)
 
-// TMDB API Configuration (used to build nice titles)
+// TMDB API Configuration
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
+// CONFIGURATION - FIXED
+// ---------------------
+// We use 'anikai.to' as it is often the unblocked mirror. 
+// If this fails, try changing this to 'https://animekai.to' or 'https://animekai.cc'
+const BASE_DOMAIN = 'https://anikai.to'; 
+
+// CRITICAL FIX: Matched User-Agent to the working Kotlin source 
+// And added the missing 'Referer' which causes blocks if missing.
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36',
+    'Referer': BASE_DOMAIN + '/',
+    'Origin': BASE_DOMAIN,
     'Connection': 'keep-alive'
 };
 
 const API = 'https://enc-dec.app/api';
-const KAI_AJAX = 'https://animekai.to/ajax';
+const KAI_AJAX = BASE_DOMAIN + '/ajax';
 
-// Generic fetch helper that returns text or json based on caller usage
+// Kitsu API Configuration
+const KITSU_BASE_URL = 'https://kitsu.io/api/edge';
+const KITSU_HEADERS = {
+    'Accept': 'application/vnd.api+json',
+    'Content-Type': 'application/vnd.api+json'
+};
+
+// Generic fetch helper
 function fetchRequest(url, options) {
     const merged = Object.assign({ method: 'GET', headers: HEADERS }, options || {});
     return fetch(url, merged).then(function(response) {
@@ -26,8 +43,8 @@ function fetchRequest(url, options) {
 
 function encryptKai(text) {
     return fetchRequest(API + '/enc-kai?text=' + encodeURIComponent(text))
-        .then(function(res) { return res.text(); /* note: enc endpoints sometimes return raw string */ })
-        .then(function(t) { return (t && t.trim()) ? t.trim() : ''; });
+        .then(function(res) { return res.json(); })
+        .then(function(json) { return json.result; });
 }
 
 function decryptKai(text) {
@@ -37,13 +54,7 @@ function decryptKai(text) {
         body: JSON.stringify({ text: text })
     })
         .then(function(res) { return res.json(); })
-        .then(function(json) {
-            // dec-kai may return a JSON object { result: "..."} or a stringified iframe object.
-            if (json && json.result) {
-                try { return JSON.parse(json.result); } catch(e) { return json.result; }
-            }
-            return json;
-        });
+        .then(function(json) { return json.result; });
 }
 
 function parseHtmlViaApi(html) {
@@ -56,39 +67,34 @@ function parseHtmlViaApi(html) {
 }
 
 function decryptMegaMedia(embedUrl) {
-    // embedders use /e/ → replace with /media/ to get json token then call dec-mega with that token
-    var mediaUrl = embedUrl.replace('/e/', '/media/');
+    // FIX: More robust URL replacement to handle variations
+    // Kotlin source constructs this carefully: "${parsedUrl.scheme}://${parsedUrl.host}/media/${token}"
+    var mediaUrl;
+    if (embedUrl.indexOf('/e/') !== -1) {
+        mediaUrl = embedUrl.replace('/e/', '/media/');
+    } else {
+        // Fallback: If URL doesn't look standard, try appending mode
+        mediaUrl = embedUrl; // Likely won't work but prevents crash
+    }
+
     return fetchRequest(mediaUrl)
         .then(function(res) { return res.json(); })
-        .then(function(mediaResp) {
-            // mediaResp.result may be an encrypted string or object
-            var encrypted = mediaResp && (mediaResp.result || mediaResp);
-            if (!encrypted) return Promise.resolve({ sources: [], tracks: [] });
-
-            // call dec-mega endpoint
+        .then(function(mediaResp) { return mediaResp.result; })
+        .then(function(encrypted) {
             return fetchRequest(API + '/dec-mega', {
                 method: 'POST',
                 headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ text: encrypted, agent: HEADERS['User-Agent'] })
-            }).then(function(res) { return res.json(); })
-              .then(function(json) {
-                  // json.result may be object or JSON-string
-                  var payload = json && json.result;
-                  if (typeof payload === 'string') {
-                      try { payload = JSON.parse(payload); } catch(e) {}
-                  }
-                  // payload expected to contain sources[] and tracks[]
-                  return payload || { sources: [], tracks: [] };
-              });
-        }).catch(function() { return { sources: [], tracks: [] }; });
+            }).then(function(res) { return res.json(); });
+        })
+        .then(function(json) { return json.result; });
 }
 
-// Debug helpers (match yflix style)
+// Debug helpers
 function createRequestId() {
     try {
         var rand = Math.random().toString(36).slice(2, 8);
-        var ts = Date.now().toString(36).slice(-6);
-        return rand + ts;
+        return rand;
     } catch (e) { return String(Date.now()); }
 }
 
@@ -99,10 +105,10 @@ function logRid(rid, msg, extra) {
     } catch(e) {}
 }
 
-// Simplified Kitsu search - just get the most relevant result
+// Kitsu Search Logic
 function searchKitsu(animeTitle) {
-    const searchUrl = 'https://kitsu.io/api/edge/anime?filter[text]=' + encodeURIComponent(animeTitle);
-    return fetchRequest(searchUrl, { headers: { 'Accept': 'application/vnd.api+json', 'Content-Type': 'application/vnd.api+json' } })
+    const searchUrl = KITSU_BASE_URL + '/anime?filter[text]=' + encodeURIComponent(animeTitle);
+    return fetchRequest(searchUrl, { headers: KITSU_HEADERS })
         .then(function(res) { return res.json(); })
         .then(function(response) {
             var results = response.data || [];
@@ -112,7 +118,7 @@ function searchKitsu(animeTitle) {
                 var english = (entry.attributes.titles && entry.attributes.titles.en || '').toLowerCase().replace(/[^\w\s]/g, '');
                 return canonical.includes(normalizedQuery) || english.includes(normalizedQuery) || normalizedQuery.includes(canonical);
             });
-        }).catch(function() { return []; });
+        });
 }
 
 function getAccurateAnimeKaiEntry(animeTitle, season, episode, tmdbId) {
@@ -138,11 +144,8 @@ function getAccurateAnimeKaiEntry(animeTitle, season, episode, tmdbId) {
 // Quality helpers
 function extractQualityFromUrl(url) {
     var patterns = [
-        /(\d{3,4})p/i,
-        /(\d{3,4})k/i,
-        /quality[_-]?(\d{3,4})/i,
-        /res[_-]?(\d{3,4})/i,
-        /(\d{3,4})x\d{3,4}/i
+        /(\d{3,4})p/i, /(\d{3,4})k/i, /quality[_-]?(\d{3,4})/i,
+        /res[_-]?(\d{3,4})/i, /(\d{3,4})x\d{3,4}/i
     ];
     for (var i = 0; i < patterns.length; i++) {
         var m = url.match(patterns[i]);
@@ -154,7 +157,7 @@ function extractQualityFromUrl(url) {
     return 'Unknown';
 }
 
-// M3U8 utilities (master/media playlist parsing)
+// M3U8 utilities
 function parseM3U8Master(content, baseUrl) {
     var lines = content.split('\n');
     var streams = [];
@@ -178,7 +181,6 @@ function parseM3U8Master(content, baseUrl) {
 }
 
 function resolveUrlRelative(url, baseUrl) {
-    if (!url) return url;
     if (url.indexOf('http') === 0) return url;
     try { return new URL(url, baseUrl).toString(); } catch (e) { return url; }
 }
@@ -186,8 +188,6 @@ function resolveUrlRelative(url, baseUrl) {
 function qualityFromResolutionOrBandwidth(stream) {
     if (stream && stream.resolution) {
         var h = parseInt(String(stream.resolution).split('x')[1]);
-        if (h >= 2160) return '4K';
-        if (h >= 1440) return '1440p';
         if (h >= 1080) return '1080p';
         if (h >= 720) return '720p';
         if (h >= 480) return '480p';
@@ -196,13 +196,10 @@ function qualityFromResolutionOrBandwidth(stream) {
     }
     if (stream && stream.bandwidth) {
         var mbps = stream.bandwidth / 1000000;
-        if (mbps >= 15) return '4K';
-        if (mbps >= 8) return '1440p';
         if (mbps >= 5) return '1080p';
         if (mbps >= 3) return '720p';
         if (mbps >= 1.5) return '480p';
-        if (mbps >= 0.8) return '360p';
-        return '240p';
+        return '360p';
     }
     return 'Unknown';
 }
@@ -218,8 +215,6 @@ function resolveM3U8(url, serverType) {
                     var q = qualityFromResolutionOrBandwidth(variants[i]);
                     out.push({ url: variants[i].url, quality: q, serverType: serverType });
                 }
-                var order = { '4K': 7, '2160p': 7, '1440p': 6, '1080p': 5, '720p': 4, '480p': 3, '360p': 2, '240p': 1, 'Unknown': 0 };
-                out.sort(function(a,b){ return (order[b.quality]||0)-(order[a.quality]||0); });
                 return { success: true, streams: out };
             }
             if (content.indexOf('#EXTINF:') !== -1) {
@@ -245,28 +240,20 @@ function resolveMultipleM3U8(m3u8Links) {
 
 function buildMediaTitle(info, mediaType, season, episode, episodeInfo) {
     if (episodeInfo && episodeInfo.seasonName) {
-        if (episodeInfo.episode) {
-            var e = String(episodeInfo.episode).padStart(2, '0');
-            return episodeInfo.seasonName + ' E' + e;
-        } else {
-            var e = String(episode).padStart(2, '0');
-            return episodeInfo.seasonName + ' E' + e;
-        }
+        var e = String(episodeInfo.episode || episode).padStart(2, '0');
+        return episodeInfo.seasonName + ' E' + e;
     }
-
     if (!info || !info.title) return '';
     if (mediaType === 'tv' && season && episode) {
         var s = String(season).padStart(2, '0');
         var e = String(episode).padStart(2, '0');
         return info.title + ' S' + s + 'E' + e;
     }
-    if (info.year) return info.title + ' (' + info.year + ')';
     return info.title;
 }
 
-// TMDB minimal info for display
+// TMDB minimal info
 function getTMDBDetails(tmdbId, mediaType) {
-    if (!tmdbId) return Promise.resolve({ title: null, year: null });
     var endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     var url = TMDB_BASE_URL + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=external_ids';
     return fetchRequest(url)
@@ -275,23 +262,20 @@ function getTMDBDetails(tmdbId, mediaType) {
             var title = mediaType === 'tv' ? data.name : data.title;
             var releaseDate = mediaType === 'tv' ? data.first_air_date : data.release_date;
             var year = releaseDate ? parseInt(releaseDate.split('-')[0]) : null;
-            return {
-                title: title,
-                year: year
-            };
+            return { title: title, year: year };
         })
         .catch(function() { return { title: null, year: null }; });
 }
 
-// Search on animekai.to and return first matching slug URL
+// Search on animekai
 function searchAnimeByName(animeName) {
-    var searchUrl = KAI_AJAX.replace('/ajax', '') + '/browser?keyword=' + encodeURIComponent(animeName);
+    // FIX: Ensure we use the global KAI_AJAX variable which uses the correct domain
+    var searchUrl = BASE_DOMAIN + '/browser?keyword=' + encodeURIComponent(animeName);
     return fetchRequest(searchUrl)
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
-            // find simple item links; tolerate multiple markup patterns
-            var pattern = /href="(\/watch\/[^\"]*)"[^>]*>(?:[\s\S]*?)<a[^>]*class="[^"]*title[^"]*"[^>]*>([^<]*)<\/a>/g;
+            var pattern = /href="(\/watch\/[^\"]*)"[^>]*>[\s\S]*?<a[^>]*class="[^"]*title[^"]*"[^>]*>([^<]*)<\/a>/g;
             var m;
             while ((m = pattern.exec(html)) !== null) {
                 var href = m[1];
@@ -299,20 +283,17 @@ function searchAnimeByName(animeName) {
                 if (href && title) {
                     results.push({
                         title: title,
-                        url: (href.indexOf('http') === 0 ? href : KAI_AJAX.replace('/ajax', '') + href),
+                        url: (href.indexOf('http') === 0 ? href : BASE_DOMAIN + href),
                         episodeCount: 0,
                         type: 'TV'
                     });
                 }
             }
             return results;
-        })
-        .catch(function(){ return []; });
+        });
 }
 
-// Get TMDB season info for better mapping
 function getTMDBSeasonInfo(tmdbId, season) {
-    if (!tmdbId) return Promise.resolve({ name: null, episodeCount: 0, seasonNumber: season });
     var url = TMDB_BASE_URL + '/tv/' + tmdbId + '/season/' + season + '?api_key=' + TMDB_API_KEY;
     return fetchRequest(url)
         .then(function(res) { return res.json(); })
@@ -328,7 +309,6 @@ function getTMDBSeasonInfo(tmdbId, season) {
         });
 }
 
-// Pick best search result for a given season (AnimeKai splits seasons by page)
 function pickResultForSeason(results, season, tmdbId) {
     if (!results || results.length === 0) return Promise.resolve(null);
     if (!season || !Number.isFinite(season)) return Promise.resolve(results[0]);
@@ -336,6 +316,7 @@ function pickResultForSeason(results, season, tmdbId) {
     var seasonStr = String(season);
     var candidates = [];
 
+    // Title match
     for (var i = 0; i < results.length; i++) {
         var r = results[i];
         var t = (r.title || '').toLowerCase();
@@ -344,62 +325,27 @@ function pickResultForSeason(results, season, tmdbId) {
         }
     }
 
+    // URL match
     for (var j = 0; j < results.length; j++) {
         var r2 = results[j];
         var u = (r2.url || '').toLowerCase();
-        if (u.indexOf('season-' + seasonStr) !== -1 || u.indexOf('-s' + seasonStr) !== -1 || u.indexOf('-season-' + seasonStr) !== -1) {
+        if (u.indexOf('season-' + seasonStr) !== -1 || u.indexOf('-s' + seasonStr) !== -1) {
             candidates.push({ r: r2, score: 2 });
         }
     }
 
     if (tmdbId && season > 1) {
         return getTMDBSeasonInfo(tmdbId, season).then(function(seasonInfo) {
-
             if (seasonInfo.episodeCount > 0) {
                 for (var k = 0; k < results.length; k++) {
-                    var r3 = results[k];
-                    if (r3.episodeCount === seasonInfo.episodeCount) {
-                        return r3;
-                    }
-                }
-
-                for (var m = 0; m < results.length; m++) {
-                    var r4 = results[m];
-                    if (Math.abs(r4.episodeCount - seasonInfo.episodeCount) <= 1 && r4.episodeCount > 0) {
-                        return r4;
-                    }
+                    if (results[k].episodeCount === seasonInfo.episodeCount) return results[k];
                 }
             }
-
-            if (candidates.length > 0) {
-                candidates.sort(function(a,b){ return b.score - a.score; });
-                return candidates[0].r;
-            }
-
-            if (season > 1) {
-                for (var l = 0; l < results.length; l++) {
-                    var r5 = results[l];
-                    var t5 = (r5.title || '').toLowerCase();
-                    if (t5.indexOf('season 1') === -1 && t5.indexOf('s1') === -1) {
-                        return r5;
-                    }
-                }
-            }
-
+            if (candidates.length > 0) return candidates.sort(function(a,b){ return b.score - a.score; })[0].r;
             return results[0];
         }).catch(function() {
-            for (var n = 0; n < results.length; n++) {
-                var r6 = results[n];
-                if (r6.episodeCount > 0) {
-                    return r6;
-                }
-            }
-
-            if (candidates.length > 0) {
-                candidates.sort(function(a,b){ return b.score - a.score; });
-                return candidates[0].r;
-            }
-            return results[0];
+             if (candidates.length > 0) return candidates.sort(function(a,b){ return b.score - a.score; })[0].r;
+             return results[0];
         });
     }
 
@@ -407,53 +353,33 @@ function pickResultForSeason(results, season, tmdbId) {
 }
 
 function extractEpisodeAndTitleFromHtml(html) {
-    var episodeInfo = {
-        episode: null,
-        title: null,
-        seasonName: null
-    };
-
-    var episodeMatch = html.match(/You are watching <b>Episode (\d+)<\/b>/i) ||
-                      html.match(/Episode (\d+)/i);
-    if (episodeMatch) {
-        episodeInfo.episode = parseInt(episodeMatch[1]);
-    }
-
-    var titleMatch = html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/h1>/i) ||
-                    html.match(/<h1[^>]*>([^<]+)<\/h1>/i) ||
-                    html.match(/<title>([^<]+)<\/title>/i);
+    var episodeInfo = { episode: null, title: null, seasonName: null };
+    var episodeMatch = html.match(/You are watching <b>Episode (\d+)<\/b>/i) || html.match(/Episode (\d+)/i);
+    if (episodeMatch) episodeInfo.episode = parseInt(episodeMatch[1]);
+    
+    var titleMatch = html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/h1>/i) || html.match(/<title>([^<]+)<\/title>/i);
     if (titleMatch) {
         var title = titleMatch[1].trim().replace(/\s+/g, ' ').replace(/&[^;]+;/g, '');
-        if (title && title.length > 3) {
-            episodeInfo.seasonName = title;
-        }
+        if (title.length > 3) episodeInfo.seasonName = title;
     }
-
     return episodeInfo;
 }
 
 function extractContentIdFromSlug(slugUrl) {
+    // FIX: Add Referer header here via fetchRequest
     return fetchRequest(slugUrl)
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var m1 = html.match(/<div[^>]*class="[^"]*rate-box[^"]*"[^>]*data-id="([^"]*)"/);
-            var contentId = null;
-            if (m1) {
-                contentId = m1[1];
-            } else {
+            var contentId = m1 ? m1[1] : null;
+            if (!contentId) {
                 var m2 = html.match(/data-id="([^"]*)"/);
                 if (m2) contentId = m2[1];
             }
-
-            if (!contentId) {
-                throw new Error('Could not find content ID');
-            }
-
-            var episodeInfo = extractEpisodeAndTitleFromHtml(html);
-
+            if (!contentId) throw new Error('Could not find content ID');
             return {
                 contentId: contentId,
-                episodeInfo: episodeInfo
+                episodeInfo: extractEpisodeAndTitleFromHtml(html)
             };
         });
 }
@@ -462,15 +388,14 @@ function formatToNuvioStreams(formattedData, mediaTitle) {
     var links = [];
     var subs = formattedData && formattedData.subtitles ? formattedData.subtitles : [];
     var streams = formattedData && formattedData.streams ? formattedData.streams : [];
+    // Nuvio compliant headers
     var headers = {
         'User-Agent': HEADERS['User-Agent'],
+        'Referer': HEADERS['Referer'], // Important for playback
         'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'identity'
     };
     for (var i = 0; i < streams.length; i++) {
         var s = streams[i];
-        if (!s || !s.url) continue;
         var quality = s.quality || extractQualityFromUrl(s.url) || 'Unknown';
         var server = (s.serverType || 'server').toUpperCase();
         links.push({
@@ -480,7 +405,7 @@ function formatToNuvioStreams(formattedData, mediaTitle) {
             quality: quality,
             size: 'Unknown',
             headers: headers,
-            subtitles: subs || [],
+            subtitles: subs,
             provider: 'animekai'
         });
     }
@@ -489,24 +414,22 @@ function formatToNuvioStreams(formattedData, mediaTitle) {
 
 // Main Nuvio entry
 function getStreams(tmdbId, mediaType, season, episode) {
-    if (mediaType !== 'tv') {
-        return Promise.resolve([]);
-    }
+    if (mediaType !== 'tv') return Promise.resolve([]);
 
     var mediaInfo = null;
     var selectedEpisodeKey = null;
     var token = null;
     var rid = createRequestId();
-    logRid(rid, 'getStreams start', { tmdbId: tmdbId, mediaType: mediaType, season: season, episode: episode });
+    
+    logRid(rid, 'getStreams start', { tmdbId: tmdbId });
 
     return getTMDBDetails(tmdbId, 'tv')
         .then(function(info) {
             mediaInfo = info || { title: null, year: null };
             var titleToSearch = mediaInfo.title || '';
-
+            var searchTitle = titleToSearch;
             if (season > 1) {
                 return getTMDBSeasonInfo(tmdbId, season).then(function(seasonInfo) {
-                    var searchTitle = titleToSearch;
                     if (seasonInfo.name && seasonInfo.name !== `Season ${season}`) {
                         searchTitle = titleToSearch + ' ' + seasonInfo.name;
                     }
@@ -516,15 +439,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
             return getAccurateAnimeKaiEntry(titleToSearch, season, episode, tmdbId);
         })
         .then(function(chosen) {
-            if (!chosen || !chosen.url) {
-                throw new Error('No AnimeKai entry found via Kitsu mapping');
-            }
-
+            if (!chosen || !chosen.url) throw new Error('No AnimeKai entry found');
             var actualEpisode = chosen.translatedEpisode || episode;
-            logRid(rid, 'chosen', { title: chosen.title, url: chosen.url, season: season, episode: actualEpisode });
-
             return extractContentIdFromSlug(chosen.url).then(function(result) {
-                logRid(rid, 'content page parsed', { contentId: result.contentId, episodeInfo: result.episodeInfo });
                 return {
                     contentId: result.contentId,
                     episode: actualEpisode,
@@ -536,124 +453,69 @@ function getStreams(tmdbId, mediaType, season, episode) {
             var contentId = result.contentId;
             var actualEpisode = result.episode;
 
-            // enc for episodes/list expects enc of contentId
             return encryptKai(contentId).then(function(encId) {
                 var url = KAI_AJAX + '/episodes/list?ani_id=' + contentId + '&_=' + encId;
-                logRid(rid, 'episodes/list enc(contentId) ready');
                 return fetchRequest(url).then(function(res) { return res.json(); });
             })
             .then(function(episodesResp) {
                 return parseHtmlViaApi(episodesResp.result);
             })
             .then(function(episodes) {
-                logRid(rid, 'episodes parsed', { totalKeys: Object.keys(episodes||{}).length });
                 var keys = Object.keys(episodes || {}).sort(function(a,b){ return parseInt(a) - parseInt(b); });
                 if (keys.length === 0) throw new Error('No episodes');
-
-                // find selectedEpisodeKey that contains the desired episode, else fallback
-                selectedEpisodeKey = null;
-                for (var i = 0; i < keys.length; i++) {
-                    var k = keys[i];
-                    var block = episodes[k] || {};
-                    if ((actualEpisode !== undefined && block[String(actualEpisode)]) || block[actualEpisode]) {
-                        selectedEpisodeKey = k;
-                        break;
-                    }
+                if (typeof actualEpisode === 'number' && episodes[String(actualEpisode)]) {
+                    selectedEpisodeKey = String(actualEpisode);
+                } else {
+                    selectedEpisodeKey = keys[0];
                 }
-                if (!selectedEpisodeKey) selectedEpisodeKey = keys[0];
-
-                // Attempt to pull the token for the specific episode inside that key; if not present, take first available
-                var episodeBlock = episodes[selectedEpisodeKey] || {};
-                var tokenEntry = null;
-                if (episodeBlock[String(actualEpisode)]) tokenEntry = episodeBlock[String(actualEpisode)];
-                else {
-                    // find first property in episodeBlock
-                    var innerKeys = Object.keys(episodeBlock);
-                    if (innerKeys.length > 0) tokenEntry = episodeBlock[innerKeys[0]];
-                }
-
-                if (!tokenEntry || !tokenEntry.token) throw new Error('Episode token not found');
-
-                token = tokenEntry.token;
+                token = episodes[selectedEpisodeKey][String(actualEpisode)].token;
                 return encryptKai(token);
             })
             .then(function(encToken) {
-                // use raw token in query param and encToken as '_' param (this matches server expectations)
                 var url = KAI_AJAX + '/links/list?token=' + token + '&_=' + encToken;
-                logRid(rid, 'links/list enc(token) ready', { selectedEpisodeKey: selectedEpisodeKey });
                 return fetchRequest(url).then(function(res) { return res.json(); });
             })
             .then(function(serversResp) { return parseHtmlViaApi(serversResp.result); })
             .then(function(servers) {
-                var serverTypes = Object.keys(servers || {});
-                var byTypeCounts = serverTypes.map(function(st){ return { type: st, count: Object.keys(servers[st]||{}).length }; });
-                logRid(rid, 'servers available', byTypeCounts);
                 var serverPromises = [];
-                var lids = [];
                 Object.keys(servers || {}).forEach(function(serverType) {
                     Object.keys(servers[serverType] || {}).forEach(function(serverKey) {
                         var lid = servers[serverType][serverKey].lid;
-                        if (!lid) return;
-                        lids.push(lid);
                         var p = encryptKai(lid)
                             .then(function(encLid) {
                                 var url = KAI_AJAX + '/links/view?id=' + lid + '&_=' + encLid;
-                                logRid(rid, 'links/view enc(lid) ready', { serverType: serverType, serverKey: serverKey, lid: lid });
                                 return fetchRequest(url).then(function(res) { return res.json(); });
                             })
-                            .then(function(embedResp) { 
-                                logRid(rid, 'decrypt(embed)', { lid: lid, serverType: serverType, serverKey: serverKey }); 
-                                return decryptKai(embedResp.result || embedResp);
-                            })
+                            .then(function(embedResp) { return decryptKai(embedResp.result); })
                             .then(function(decrypted) {
-                                // decrypted may be a plain URL string or object { url: "..."} or a mega embed
-                                if (!decrypted) return { streams: [], subtitles: [] };
-
-                                var embedUrl = typeof decrypted === 'string' ? decrypted : (decrypted.url || decrypted.file || null);
-                                if (!embedUrl) return { streams: [], subtitles: [] };
-
-                                // If embed is a mega/media embed, handle via decryptMegaMedia
-                                return decryptMegaMedia(embedUrl)
-                                    .then(function(mediaData) {
-                                        var srcs = [];
-                                        if (mediaData && mediaData.sources) {
-                                            for (var i = 0; i < mediaData.sources.length; i++) {
-                                                var src = mediaData.sources[i];
-                                                if (src && src.file) {
-                                                    srcs.push({
-                                                        url: src.file,
-                                                        quality: extractQualityFromUrl(src.file),
-                                                        serverType: serverType
-                                                    });
-                                                } else if (src && src.url) {
-                                                    srcs.push({
-                                                        url: src.url,
-                                                        quality: extractQualityFromUrl(src.url),
-                                                        serverType: serverType
-                                                    });
+                                if (decrypted && decrypted.url) {
+                                    return decryptMegaMedia(decrypted.url)
+                                        .then(function(mediaData) {
+                                            var srcs = [];
+                                            if (mediaData && mediaData.sources) {
+                                                for (var i = 0; i < mediaData.sources.length; i++) {
+                                                    var src = mediaData.sources[i];
+                                                    if (src && src.file) {
+                                                        srcs.push({
+                                                            url: src.file,
+                                                            quality: extractQualityFromUrl(src.file),
+                                                            serverType: serverType
+                                                        });
+                                                    }
                                                 }
                                             }
-                                        } else if (embedUrl) {
-                                            // fallback: use embedUrl as direct stream if it looks like media
-                                            srcs.push({ url: embedUrl, quality: extractQualityFromUrl(embedUrl), serverType: serverType });
-                                        }
-
-                                        var tracks = mediaData && mediaData.tracks ? mediaData.tracks : [];
-                                        // Normalize tracks to {file,label,default,kind}
-                                        var subtitles = (tracks || []).filter(function(t){ return t && (t.kind === 'captions' || t.file && (t.file.endsWith('.vtt') || t.file.indexOf('.srt')>-1)); })
-                                            .map(function(t) {
-                                                return { language: t.label || 'Unknown', url: t.file, default: !!t.default };
-                                            });
-
-                                        return { streams: srcs, subtitles: subtitles };
-                                    });
+                                            return {
+                                                streams: srcs,
+                                                subtitles: (mediaData && mediaData.tracks) ? mediaData.tracks.filter(function(t){ return t.kind === 'captions'; }).map(function(t){ return { language: t.label || 'Unknown', url: t.file, default: !!t.default }; }) : []
+                                            };
+                                        });
+                                }
+                                return { streams: [], subtitles: [] };
                             })
                             .catch(function(){ return { streams: [], subtitles: [] }; });
                         serverPromises.push(p);
                     });
                 });
-                var uniqueLids = Array.from(new Set(lids));
-                logRid(rid, 'fan-out lids', { total: lids.length, unique: uniqueLids.length });
 
                 return Promise.allSettled(serverPromises).then(function(results) {
                     var allStreams = [];
@@ -665,33 +527,32 @@ function getStreams(tmdbId, mediaType, season, episode) {
                             allSubs = allSubs.concat(val.subtitles || []);
                         }
                     }
-                    // Resolve M3U8 masters to quality variants
                     var m3u8Links = allStreams.filter(function(s){ return s && s.url && s.url.indexOf('.m3u8') !== -1; });
                     var directLinks = allStreams.filter(function(s){ return !(s && s.url && s.url.indexOf('.m3u8') !== -1); });
 
                     return resolveMultipleM3U8(m3u8Links).then(function(resolved) {
                         var combined = directLinks.concat(resolved);
-                        logRid(rid, 'streams resolved', { direct: directLinks.length, m3u8: m3u8Links.length, combined: combined.length });
-                        // Deduplicate subtitles by URL
+                        // Dedupe subs
                         var uniqueSubs = [];
                         var seen = {};
                         for (var j = 0; j < allSubs.length; j++) {
                             var su = allSubs[j];
                             if (su && su.url && !seen[su.url]) { seen[su.url] = true; uniqueSubs.push(su); }
                         }
+                        
                         var mediaTitle = buildMediaTitle(mediaInfo, 'tv', season, actualEpisode || parseInt(selectedEpisodeKey), result.episodeInfo);
                         var formatted = formatToNuvioStreams({ streams: combined, subtitles: uniqueSubs }, mediaTitle);
-                        // Sort by quality roughly
-                        var order = { '4K': 7, '2160p': 7, '1440p': 6, '1080p': 5, '720p': 4, '480p': 3, '360p': 2, '240p': 1, 'Unknown': 0 };
+                        
+                        // Rough Sort
+                        var order = { '1080p': 5, '720p': 4, '480p': 3, '360p': 2, '240p': 1, 'Unknown': 0 };
                         formatted.sort(function(a, b) { return (order[b.quality] || 0) - (order[a.quality] || 0); });
-                        logRid(rid, 'returning streams', { count: formatted.length });
                         return formatted;
                     });
                 });
             });
         })
         .catch(function(err) {
-            logRid(rid, 'ERROR ' + (err && err.message ? err.message : String(err)));
+            logRid(rid, 'ERROR', err);
             return [];
         });
 }
@@ -700,5 +561,5 @@ function getStreams(tmdbId, mediaType, season, episode) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
-    global.getStreams = getStreams;
+    global.AnimeKaiScraperModule = { getStreams };
 }
