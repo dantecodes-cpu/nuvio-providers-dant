@@ -1,14 +1,15 @@
 // AnimeKai Scraper for Nuvio Local Scrapers
-// FIXED VERSION: Movies+TV, Subtitles (Type/Title Fix), Cloudflare Bypass
+// FULLY FIXED: Movies/TV Support + Kotlin-style Subtitle Extraction + Cloudflare Fix
 
 // TMDB API Configuration
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // CONFIGURATION
+// We use 'anikai.to' as it is the currently active mirror used by the Kotlin app.
 const BASE_DOMAIN = 'https://anikai.to'; 
 
-// CRITICAL HEADERS: Mobile UA + Referer required for access
+// HEADERS: Matched to Kotlin Source (Mobile UA + Referer)
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36',
     'Referer': BASE_DOMAIN + '/',
@@ -38,10 +39,10 @@ function fetchRequest(url, options) {
     });
 }
 
-// Helper to determine subtitle type for Nuvio player
+// Helper: Determine subtitle type for Nuvio player
 function getSubType(url) {
     if (url.indexOf('.srt') !== -1) return 'srt';
-    return 'vtt'; // Default to vtt as it's most common on web
+    return 'vtt'; // Default to vtt (standard for web)
 }
 
 // --- Encryption/Decryption Middleware ---
@@ -71,7 +72,9 @@ function parseHtmlViaApi(html) {
       .then(function(json) { return json.result; });
 }
 
-// FIX: Improved MegaUp logic with Loosened Subtitle Filter & Title/Type properties
+// --- Subtitle & Stream Extraction Logic ---
+
+// LOGIC 1: API Subtitle Extraction (Matches Kotlin's 'MegaUpResult.subtitleTracks')
 function decryptMegaMedia(embedUrl) {
     var mediaUrl;
     if (embedUrl.indexOf('/e/') !== -1) {
@@ -93,7 +96,7 @@ function decryptMegaMedia(embedUrl) {
         .then(function(json) {
             var result = json.result;
             
-            // Extract sources
+            // Extract sources (video files)
             var srcs = [];
             if (result && result.sources) {
                 for (var i = 0; i < result.sources.length; i++) {
@@ -105,24 +108,22 @@ function decryptMegaMedia(embedUrl) {
                 }
             }
 
-            // FILTER SUBTITLES
-            // Fixes: 
-            // 1. Accepts 'subtitles' OR 'captions' (Loosened filter)
-            // 2. Adds 'title' property for Nuvio UI
-            // 3. Adds 'type' property (vtt/srt)
+            // Extract Subtitles from API
+            // Replicates Kotlin filter: it.kind == "captions" && it.file.endsWith(".vtt")
             var subs = [];
             if (result && result.tracks) {
                 subs = result.tracks
                     .filter(function(t) { 
+                        // We check for both captions and subtitles to be safe
                         return (t.kind === 'captions' || t.kind === 'subtitles');
                     })
                     .map(function(t) {
                         var label = t.label || 'English';
                         return { 
-                            title: label,       // Display Name
-                            language: label,    // Lang code/name
+                            title: label,       // For Nuvio UI
+                            language: label,    // Lang Code
                             url: t.file, 
-                            type: getSubType(t.file) // vtt or srt
+                            type: getSubType(t.file) 
                         };
                     });
             }
@@ -131,7 +132,107 @@ function decryptMegaMedia(embedUrl) {
         });
 }
 
-// Debug helpers
+// LOGIC 2: M3U8 Subtitle Extraction (Replicates Kotlin's 'PlaylistUtils.extractFromHls')
+function resolveM3U8(url, serverType) {
+    return fetchRequest(url, { headers: Object.assign({}, HEADERS, { 'Accept': '*/*' }) })
+        .then(function(res) { return res.text(); })
+        .then(function(content) {
+            var streams = [];
+            var subtitles = [];
+
+            // We scan the M3U8 text manually because we don't have the Kotlin library
+            if (content.indexOf('#EXT-X-STREAM-INF') !== -1 || content.indexOf('#EXT-X-MEDIA') !== -1) {
+                var lines = content.split('\n');
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim();
+                    
+                    // A. Video Streams extraction
+                    if (line.indexOf('#EXT-X-STREAM-INF') === 0 && lines[i+1]) {
+                        var resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+                        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+                        var q = 'Unknown';
+                        
+                        if (resMatch) q = resMatch[1] + 'p';
+                        else if (bwMatch) {
+                            var mbps = parseInt(bwMatch[1]) / 1000000;
+                            if (mbps >= 4) q = '1080p';
+                            else if (mbps >= 2.5) q = '720p';
+                            else if (mbps >= 1) q = '480p';
+                            else q = '360p';
+                        }
+
+                        var u = lines[i+1].trim();
+                        if (u && u.indexOf('#') !== 0) {
+                            if (u.indexOf('http') !== 0) u = resolveUrlRelative(u, url);
+                            streams.push({ url: u, quality: q, serverType: serverType });
+                        }
+                    }
+                    
+                    // B. Subtitle extraction (The "PlaylistUtils" logic)
+                    // We look for #EXT-X-MEDIA:TYPE=SUBTITLES
+                    if (line.indexOf('#EXT-X-MEDIA:TYPE=SUBTITLES') === 0) {
+                        var uriMatch = line.match(/URI="([^"]+)"/);
+                        var nameMatch = line.match(/NAME="([^"]+)"/);
+                        var langMatch = line.match(/LANGUAGE="([^"]+)"/);
+                        
+                        if (uriMatch) {
+                            var subUrl = resolveUrlRelative(uriMatch[1], url);
+                            var label = (nameMatch ? nameMatch[1] : null) || (langMatch ? langMatch[1] : 'Unknown');
+                            
+                            subtitles.push({
+                                url: subUrl,
+                                title: label,
+                                language: label,
+                                type: getSubType(subUrl)
+                            });
+                        }
+                    }
+                }
+                return { success: true, streams: streams, subtitles: subtitles };
+            }
+            
+            return { success: true, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] };
+        })
+        .catch(function(){ return { success: false, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] }; });
+}
+
+function resolveMultipleM3U8(m3u8Links) {
+    var promises = m3u8Links.map(function(link){ return resolveM3U8(link.url, link.serverType); });
+    return Promise.allSettled(promises).then(function(results){
+        var outStreams = [];
+        var outSubs = [];
+        for (var i = 0; i < results.length; i++) {
+            if (results[i].status === 'fulfilled' && results[i].value) {
+                if (results[i].value.streams) outStreams = outStreams.concat(results[i].value.streams);
+                if (results[i].value.subtitles) outSubs = outSubs.concat(results[i].value.subtitles);
+            }
+        }
+        return { streams: outStreams, subtitles: outSubs };
+    });
+}
+
+function resolveUrlRelative(url, baseUrl) {
+    if (url.indexOf('http') === 0) return url;
+    try { return new URL(url, baseUrl).toString(); } catch (e) { return url; }
+}
+
+function extractQualityFromUrl(url) {
+    var patterns = [
+        /(\d{3,4})p/i, /(\d{3,4})k/i, /quality[_-]?(\d{3,4})/i,
+        /res[_-]?(\d{3,4})/i, /(\d{3,4})x\d{3,4}/i
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+        var m = url.match(patterns[i]);
+        if (m) {
+            var q = parseInt(m[1]);
+            if (q >= 240 && q <= 4320) return q + 'p';
+        }
+    }
+    return 'Unknown';
+}
+
+// --- Debug & Search ---
+
 function createRequestId() {
     try {
         var rand = Math.random().toString(36).slice(2, 8);
@@ -145,8 +246,6 @@ function logRid(rid, msg, extra) {
         else console.log('[AnimeKai][rid:' + rid + '] ' + msg);
     } catch(e) {}
 }
-
-// --- Search Logic (Movies + TV) ---
 
 function searchKitsu(animeTitle) {
     const searchUrl = KITSU_BASE_URL + '/anime?filter[text]=' + encodeURIComponent(animeTitle);
@@ -166,7 +265,7 @@ function searchKitsu(animeTitle) {
 function searchAnimeByName(animeName, type) {
     var searchUrl = BASE_DOMAIN + '/browser?keyword=' + encodeURIComponent(animeName);
     
-    // Add Kotlin-style filter
+    // Kotlin-style filter: &type[]=movie OR &type[]=tv
     if (type === 'movie') {
         searchUrl += '&type[]=movie';
     } else {
@@ -217,7 +316,7 @@ function getAccurateAnimeKaiEntry(animeTitle, season, episode, tmdbId, type) {
 function pickResult(results, mediaType, season, tmdbId) {
     if (!results || results.length === 0) return Promise.resolve(null);
     
-    // For movies, accept first match
+    // For movies, we just take the first match (since we already filtered by type=movie)
     if (mediaType === 'movie') {
         return Promise.resolve(results[0]);
     }
@@ -257,107 +356,6 @@ function pickResult(results, mediaType, season, tmdbId) {
     }
 
     return Promise.resolve(candidates.length > 0 ? candidates.sort(function(a,b){ return b.score - a.score; })[0].r : results[0]);
-}
-
-// --- Quality & M3U8 Logic (With M3U8 Subtitle Extraction) ---
-
-function extractQualityFromUrl(url) {
-    var patterns = [
-        /(\d{3,4})p/i, /(\d{3,4})k/i, /quality[_-]?(\d{3,4})/i,
-        /res[_-]?(\d{3,4})/i, /(\d{3,4})x\d{3,4}/i
-    ];
-    for (var i = 0; i < patterns.length; i++) {
-        var m = url.match(patterns[i]);
-        if (m) {
-            var q = parseInt(m[1]);
-            if (q >= 240 && q <= 4320) return q + 'p';
-        }
-    }
-    return 'Unknown';
-}
-
-function resolveUrlRelative(url, baseUrl) {
-    if (url.indexOf('http') === 0) return url;
-    try { return new URL(url, baseUrl).toString(); } catch (e) { return url; }
-}
-
-// FIX: Extracts BOTH streams and subtitles from master playlist
-function resolveM3U8(url, serverType) {
-    return fetchRequest(url, { headers: Object.assign({}, HEADERS, { 'Accept': '*/*' }) })
-        .then(function(res) { return res.text(); })
-        .then(function(content) {
-            var streams = [];
-            var subtitles = [];
-
-            if (content.indexOf('#EXT-X-STREAM-INF') !== -1 || content.indexOf('#EXT-X-MEDIA') !== -1) {
-                var lines = content.split('\n');
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].trim();
-                    
-                    // 1. Video Streams
-                    if (line.indexOf('#EXT-X-STREAM-INF') === 0 && lines[i+1]) {
-                        var resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
-                        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-                        var q = 'Unknown';
-                        
-                        if (resMatch) q = resMatch[1] + 'p';
-                        else if (bwMatch) {
-                            var mbps = parseInt(bwMatch[1]) / 1000000;
-                            if (mbps >= 4) q = '1080p';
-                            else if (mbps >= 2.5) q = '720p';
-                            else if (mbps >= 1) q = '480p';
-                            else q = '360p';
-                        }
-
-                        var u = lines[i+1].trim();
-                        if (u && u.indexOf('#') !== 0) {
-                            if (u.indexOf('http') !== 0) u = resolveUrlRelative(u, url);
-                            streams.push({ url: u, quality: q, serverType: serverType });
-                        }
-                    }
-                    
-                    // 2. Subtitles inside M3U8
-                    // Regex scan for URI, NAME, LANGUAGE
-                    if (line.indexOf('#EXT-X-MEDIA:TYPE=SUBTITLES') === 0) {
-                        var uriMatch = line.match(/URI="([^"]+)"/);
-                        var nameMatch = line.match(/NAME="([^"]+)"/);
-                        var langMatch = line.match(/LANGUAGE="([^"]+)"/);
-                        
-                        if (uriMatch) {
-                            var subUrl = resolveUrlRelative(uriMatch[1], url);
-                            var label = (nameMatch ? nameMatch[1] : null) || (langMatch ? langMatch[1] : 'Unknown');
-                            
-                            subtitles.push({
-                                url: subUrl,
-                                title: label,    // Added title
-                                language: label,
-                                type: getSubType(subUrl) // Added type
-                            });
-                        }
-                    }
-                }
-                return { success: true, streams: streams, subtitles: subtitles };
-            }
-            
-            // Fallback for simple m3u8
-            return { success: true, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] };
-        })
-        .catch(function(){ return { success: false, streams: [{ url: url, quality: 'Unknown', serverType: serverType }], subtitles: [] }; });
-}
-
-function resolveMultipleM3U8(m3u8Links) {
-    var promises = m3u8Links.map(function(link){ return resolveM3U8(link.url, link.serverType); });
-    return Promise.allSettled(promises).then(function(results){
-        var outStreams = [];
-        var outSubs = [];
-        for (var i = 0; i < results.length; i++) {
-            if (results[i].status === 'fulfilled' && results[i].value) {
-                if (results[i].value.streams) outStreams = outStreams.concat(results[i].value.streams);
-                if (results[i].value.subtitles) outSubs = outSubs.concat(results[i].value.subtitles);
-            }
-        }
-        return { streams: outStreams, subtitles: outSubs };
-    });
 }
 
 // --- Metadata & Formatting ---
@@ -440,12 +438,13 @@ function extractContentIdFromSlug(slugUrl) {
 
 function formatToNuvioStreams(formattedData, mediaTitle) {
     var links = [];
+    // Ensure subtitles exist
     var subs = formattedData && formattedData.subtitles ? formattedData.subtitles : [];
     var streams = formattedData && formattedData.streams ? formattedData.streams : [];
     
     var headers = {
         'User-Agent': HEADERS['User-Agent'],
-        'Referer': HEADERS['Referer'], // Important for playback
+        'Referer': HEADERS['Referer'], // Critical for video playback
         'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
     };
 
@@ -460,7 +459,7 @@ function formatToNuvioStreams(formattedData, mediaTitle) {
             quality: quality,
             size: 'Unknown',
             headers: headers,
-            subtitles: subs,
+            subtitles: subs, // Attach valid subtitle array here
             provider: 'animekai'
         });
     }
@@ -572,12 +571,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
                             .then(function(embedResp) { return decryptKai(embedResp.result); })
                             .then(function(decrypted) {
                                 if (decrypted && decrypted.url) {
+                                    // Calls Logic 1 (API Subs)
                                     return decryptMegaMedia(decrypted.url);
                                 }
                                 return { streams: [], subtitles: [] };
                             })
                             .then(function(decryptedData) {
-                                // Add serverType to streams for naming
+                                // Mark server type
                                 if (decryptedData.streams) {
                                     decryptedData.streams.forEach(function(s) { s.serverType = serverType; });
                                 }
@@ -603,7 +603,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     var m3u8Links = allStreams.filter(function(s){ return s && s.url && s.url.indexOf('.m3u8') !== -1; });
                     var directLinks = allStreams.filter(function(s){ return !(s && s.url && s.url.indexOf('.m3u8') !== -1); });
 
-                    // Resolve M3U8 links for more streams AND subtitles
+                    // Resolve M3U8 links for more streams AND Logic 2 (M3U8 Subs)
                     return resolveMultipleM3U8(m3u8Links).then(function(resolutionResult) {
                         var combinedStreams = directLinks.concat(resolutionResult.streams);
                         var combinedSubs = apiSubs.concat(resolutionResult.subtitles);
