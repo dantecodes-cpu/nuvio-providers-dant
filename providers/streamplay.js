@@ -1292,7 +1292,42 @@
       if (PROVIDERS[i].id === 'yflix') { PROVIDERS[i].fn = providerYFlix; break; }
     }
   })();
+    // -----------------------
+  // WIRING: Connect extractors to registry (Fix for Null Function Error)
+  // -----------------------
+  (function wireProviders() {
+    // Map specific functions defined above to their IDs
+    var specificExtractors = {
+      'vegamovies': provider_vegamovies,
+      'playm4u': provider_playm4u,
+      'filemoon': provider_filemoon,
+      'mixdrop': provider_mixdrop,
+      'streamsb': provider_streamsb,
+      'mp4upload': provider_mp4upload,
+      'streamtape': provider_streamtape,
+      'dood': provider_dood,
+      'voe': provider_voe,
+      'vidzee': provider_vidzee,
+      'vidsrccc': provider_vidsrccc,
+      'vcloud': provider_vcloud
+      // yflix is handled internally in its own block
+    };
 
+    PROVIDERS.forEach(function(p) {
+      // 1. If it has a specific extractor, assign it
+      if (specificExtractors[p.id]) {
+        p.fn = specificExtractors[p.id];
+      } 
+      // 2. If it is NOT yflix and still has no function, assign the GENERIC extractor
+      else if (p.id !== 'yflix' && !p.fn) {
+        p.fn = function(input) {
+          // Wrap the generic extractor to pass the ID and Input
+          return genericProviderExtractor(p.id, input, {}); 
+        };
+      }
+    });
+  })();
+    
   // -----------------------
   // Master getStreams (TMDB integrated)
   // -----------------------
