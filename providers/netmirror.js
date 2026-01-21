@@ -264,12 +264,7 @@ function loadContent(contentId, platform) {
   });
 }
 
-function findEpisodeId(episodes, season, episode) {
-  if (!episodes || episodes.length === 0) {
-    console.log("[NetMirror] No episodes found in content data");
-    return null;
-  }
-  const validEpisodes = epfunction getStreamingLinks(contentId, title, platform) {
+function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title}`);
   const ottMap = {
     "netflix": "nf",
@@ -390,7 +385,14 @@ function findEpisodeId(episodes, season, episode) {
     return { sources, subtitles };
   });
 }
-isodes.filter((ep) => ep !== null);
+
+
+function findEpisodeId(episodes, season, episode) {
+  if (!episodes || episodes.length === 0) {
+    console.log("[NetMirror] No episodes found in content data");
+    return null;
+  }
+  const validEpisodes = episodes.filter((ep) => ep !== null);
   console.log(`[NetMirror] Found ${validEpisodes.length} valid episodes`);
   if (validEpisodes.length > 0) {
     console.log(`[NetMirror] Sample episode structure:`, JSON.stringify(validEpisodes[0], null, 2));
@@ -421,6 +423,7 @@ isodes.filter((ep) => ep !== null);
     return null;
   }
 }
+
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
   console.log(`[NetMirror] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
   const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
