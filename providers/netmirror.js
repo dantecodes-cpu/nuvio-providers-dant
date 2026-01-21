@@ -271,6 +271,7 @@ function getStreamingLinks(contentId, title, platform) {
     "disney": "hs"
   };
   const ott = ottMap[platform.toLowerCase()] || "nf";
+  
   return bypass().then(function(cookie) {
     const cookies = {
       "t_hash_t": cookie,
@@ -279,24 +280,22 @@ function getStreamingLinks(contentId, title, platform) {
       "hd": "on"
     };
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
+    
+    // FIX: Netflix must use /tv/playlist.php to generate valid tokens
     const playlistEndpoints = {
-  netflix: `${NETMIRROR_BASE}/playlist.php`,
-  primevideo: `${NETMIRROR_BASE}/pv/playlist.php`,
-  disney: `${NETMIRROR_BASE}/mobile/hs/playlist.php`
-};
+      netflix: `${NETMIRROR_BASE}/tv/playlist.php`, 
+      primevideo: `${NETMIRROR_BASE}/pv/playlist.php`,
+      disney: `${NETMIRROR_BASE}/mobile/hs/playlist.php`
+    };
 
-const playlistUrl =
-  playlistEndpoints[platform.toLowerCase()] ||
-  playlistEndpoints.netflix;
+    const playlistUrl = playlistEndpoints[platform.toLowerCase()] || playlistEndpoints.netflix;
+    
     return makeRequest(
       `${playlistUrl}?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
-          "Referer":
-  platform === "disney"
-    ? `${NETMIRROR_BASE}/mobile/hs/home`
-    : `${NETMIRROR_BASE}/tv/home`
+          "Referer": platform === "disney" ? `${NETMIRROR_BASE}/mobile/hs/home` : `${NETMIRROR_BASE}/tv/home`
         })
       }
     );
@@ -310,31 +309,33 @@ const playlistUrl =
     const sources = [];
     const subtitles = [];
     playlist.forEach((item) => {
-  if (item.sources) {
-    item.sources.forEach((source) => {
-      // 1. Clean the /tv/ path first
-      let file = source.file.replace("/tv/", "/");
-      
-      let fullUrl;
-      // 2. Build the full URL without destroying existing query parameters
-      if (file.startsWith("//")) {
-        fullUrl = "https:" + file;
-      } else if (file.startsWith("/")) {
-        fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + file;
-      } else if (file.startsWith("http")) {
-        fullUrl = file;
-      } else {
-        fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + file;
+      if (item.sources) {
+        item.sources.forEach((source) => {
+          let file = source.file;
+          
+          // FIX: Manually strip /tv/ from the path for movies
+          if (file.includes("/tv/")) {
+            file = file.replace("/tv/", "/");
+          }
+
+          let fullUrl;
+          if (file.startsWith("//")) {
+            fullUrl = "https:" + file;
+          } else if (file.startsWith("/")) {
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + file;
+          } else if (file.startsWith("http")) {
+            fullUrl = file;
+          } else {
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + file;
+          }
+
+          sources.push({
+            url: fullUrl,
+            quality: source.label,
+            type: source.type || "application/x-mpegURL"
+          });
+        });
       }
-
-      sources.push({
-        url: fullUrl,
-        quality: source.label,
-        type: source.type || "application/x-mpegURL"
-      });
-    });
-  }
-
       if (item.tracks) {
         item.tracks.filter((track) => track.kind === "captions").forEach((track) => {
           let fullSubUrl = track.file;
@@ -350,7 +351,6 @@ const playlistUrl =
         });
       }
     });
-    console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     return { sources, subtitles };
   });
 }
