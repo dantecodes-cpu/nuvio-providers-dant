@@ -103,8 +103,8 @@ function searchContent(query, platform) {
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     const searchEndpoints = {
       "netflix": `${NETMIRROR_BASE}/search.php`,
-      "primevideo": `${NETMIRROR_BASE}/search.php`,
-      "disney": `${NETMIRROR_BASE}/search.php`
+      "primevideo": `${NETMIRROR_BASE}/mobile/pv/search.php`,
+      "disney": `${NETMIRROR_BASE}/mobile/hs/search.php`
     };
     const searchUrl = searchEndpoints[platform.toLowerCase()] || searchEndpoints["netflix"];
     return makeRequest(
@@ -202,7 +202,7 @@ function loadContent(contentId, platform) {
     const postEndpoints = {
       "netflix": `${NETMIRROR_BASE}/post.php`,
       "primevideo": `${NETMIRROR_BASE}/pv/post.php`,
-      "disney": `${NETMIRROR_BASE}/mobile/hs/post.php`
+      "disney": `${NETMIRROR_BASE}/post.php`
     };
     const postUrl = postEndpoints[platform.toLowerCase()] || postEndpoints["netflix"];
     return makeRequest(
