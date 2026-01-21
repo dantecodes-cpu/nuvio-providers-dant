@@ -312,7 +312,7 @@ const playlistUrl =
     playlist.forEach((item) => {
       if (item.sources) {
         item.sources.forEach((source) => {
-          let fullUrl = source.file;
+          let fullUrl = source.file.replace("/tv/", "/");
 
 // protocol-relative
 if (fullUrl.startsWith("//")) {
