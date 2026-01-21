@@ -293,7 +293,10 @@ const playlistUrl =
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}/tv/home`
+          "Referer":
+  platform === "disney"
+    ? `${NETMIRROR_BASE}/mobile/hs/home`
+    : `${NETMIRROR_BASE}/tv/home`
         })
       }
     );
@@ -533,13 +536,22 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 }
                 const lowerPlatform = (platform || "").toLowerCase();
                 const isNfOrPv = lowerPlatform === "netflix" || lowerPlatform === "primevideo";
-                const streamHeaders = {
-                  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
-                  "Origin": isNfOrPv ? "https://net51.cc" : "https://net51.cc",
-                  "Referer": isNfOrPv ? "https://net51.cc/" : "https://net51.cc/tv/home",
-                  "Cookie": "hd=on",
-                  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/138.0.7204.156 Mobile/15E148 Safari/604.1"
-                };
+                const isDisney = platform === "disney";
+const isPrime = platform === "primevideo";
+
+const streamHeaders = {
+  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
+  "Origin": "https://net51.cc",
+  "Referer": isDisney
+    ? "https://net51.cc/mobile/hs/home"
+    : "https://net51.cc/tv/home",
+  "Cookie": "hd=on",
+  "User-Agent": isDisney
+    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
+    : isPrime
+    ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+};
                 return {
                   name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
                   title: streamTitle,
