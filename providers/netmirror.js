@@ -151,8 +151,8 @@ function getEpisodesFromSeason(seriesId, seasonId, platform, page) {
     let currentPage = page || 1;
     const episodesEndpoints = {
       "netflix": `${NETMIRROR_BASE}/episodes.php`,
-      "primevideo": `${NETMIRROR_BASE}/pv/hls/episodes.php`,
-      "disney": `${NETMIRROR_BASE}/mobile/hs/hls/episodes.php`
+      "primevideo": `${NETMIRROR_BASE}/pv/episodes.php`,
+      "disney": `${NETMIRROR_BASE}/mobile/hs/episodes.php`
     };
     const episodesUrl = episodesEndpoints[platform.toLowerCase()] || episodesEndpoints["netflix"];
     function fetchPage(pageNum) {
@@ -201,8 +201,8 @@ function loadContent(contentId, platform) {
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     const postEndpoints = {
       "netflix": `${NETMIRROR_BASE}/post.php`,
-      "primevideo": `${NETMIRROR_BASE}/pv/hls/post.php`,
-      "disney": `${NETMIRROR_BASE}mobile/hs/hls/post.php`
+      "primevideo": `${NETMIRROR_BASE}/pv/post.php`,
+      "disney": `${NETMIRROR_BASE}/mobile/hs/post.php`
     };
     const postUrl = postEndpoints[platform.toLowerCase()] || postEndpoints["netflix"];
     return makeRequest(
@@ -279,7 +279,15 @@ function getStreamingLinks(contentId, title, platform) {
       "hd": "on"
     };
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    const playlistUrl = `${NETMIRROR_BASE}/tv/playlist.php`;
+    const playlistEndpoints = {
+  netflix: `${NETMIRROR_BASE}/tv/playlist.php`,
+  primevideo: `${NETMIRROR_BASE}/pv/playlist.php`,
+  disney: `${NETMIRROR_BASE}/mobile/hs/playlist.php`
+};
+
+const playlistUrl =
+  playlistEndpoints[platform.toLowerCase()] ||
+  playlistEndpoints.netflix;
     return makeRequest(
       `${playlistUrl}?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
       {
@@ -301,10 +309,17 @@ function getStreamingLinks(contentId, title, platform) {
     playlist.forEach((item) => {
       if (item.sources) {
         item.sources.forEach((source) => {
-          let fullUrl = source.file.replace("/tv/", "/");
-          if (!fullUrl.startsWith("/"))
-            fullUrl = "/" + fullUrl;
-          fullUrl = NETMIRROR_BASE + fullUrl;
+          let fullUrl = source.file;
+          // absolute protocol-relative
+          if (fullUrl.startsWith("//")) {
+            fullUrl = "https:" + fullUrl;
+            // absolute path
+          } else if (fullUrl.startsWith("/")) {
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + fullUrl;
+            // relative path
+          } else if (!fullUrl.startsWith("http")) {
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + fullUrl;
+          }
           sources.push({
             url: fullUrl,
             quality: source.label,
