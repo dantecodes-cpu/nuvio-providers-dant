@@ -313,16 +313,19 @@ const playlistUrl =
       if (item.sources) {
         item.sources.forEach((source) => {
           let fullUrl = source.file;
-          // absolute protocol-relative
-          if (fullUrl.startsWith("//")) {
-            fullUrl = "https:" + fullUrl;
-            // absolute path
-          } else if (fullUrl.startsWith("/")) {
-            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + fullUrl;
-            // relative path
-          } else if (!fullUrl.startsWith("http")) {
-            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + fullUrl;
-          }
+
+// protocol-relative
+if (fullUrl.startsWith("//")) {
+  fullUrl = "https:" + fullUrl;
+
+// absolute path (KEEP AS-IS)
+} else if (fullUrl.startsWith("/")) {
+  fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + fullUrl;
+
+// relative path
+} else if (!fullUrl.startsWith("http")) {
+  fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + fullUrl;
+}
           sources.push({
             url: fullUrl,
             quality: source.label,
@@ -536,8 +539,10 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 }
                 const lowerPlatform = (platform || "").toLowerCase();
                 const isNfOrPv = lowerPlatform === "netflix" || lowerPlatform === "primevideo";
-                const isDisney = platform === "disney";
+                
+
 const isPrime = platform === "primevideo";
+const isDisney = platform === "disney";
 
 const streamHeaders = {
   "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
@@ -548,10 +553,12 @@ const streamHeaders = {
   "Cookie": "hd=on",
   "User-Agent": isDisney
     ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
-    : isPrime
-    ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
 };
+
+if (isPrime) {
+  streamHeaders["Range"] = "bytes=0-";
+}
                 return {
                   name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
                   title: streamTitle,
