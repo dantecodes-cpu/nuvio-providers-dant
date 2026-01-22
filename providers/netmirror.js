@@ -280,11 +280,13 @@ function getStreamingLinks(contentId, title, platform) {
   };
   const ott = ottMap[platform.toLowerCase()] || "nf";
   return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "ott": ott,
-      "hd": "on"
-    };
+// REPLACE ALL your user_token values with Cloudstream's:
+const cookies = {
+    "t_hash_t": cookie,
+    "user_token": "a0a5f663894ade410614071fe46baca6", // ← CLOUDSTREAM'S TOKEN
+    "hd": "on",
+    "ott": ott
+};
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     let playlistUrl;
     if (platform.toLowerCase() === "primevideo") {
