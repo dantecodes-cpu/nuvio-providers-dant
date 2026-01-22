@@ -595,10 +595,9 @@ const isNetflix = platform === "netflix";
   title: streamTitle,
   url: source.url,
   quality,
-  type: source.type.includes("mpegURL") ? "hls" : "direct",
-  headers: source.headers   // ✅ USE THIS
+  type: (source.type || "").includes("mpegURL") ? "hls" : "direct",
+  headers: source.headers
 };
-                )};
               streams.sort((a, b) => {
                 if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
                   return -1;
