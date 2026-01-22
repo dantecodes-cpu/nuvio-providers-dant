@@ -223,46 +223,7 @@ function loadContent(contentId, platform) {
       console.log("[NetMirror] Loading episodes from all seasons...");
       let episodePromise = Promise.resolve();
       if (postData.nextPageShow === 1 && postData.nextPageSeason) {
-        episodePromise = episodePromise.then(function() {
-          return getEpisodesFromSeason(contentId, postData.nextPageSeason, platform, 2);
-        }).then(function(additionalEpisodes) {
-          allEpisodes.push(...additionalEpisodes);
-        });
-      }
-      if (postData.season && postData.season.length > 1) {
-        const otherSeasons = postData.season.slice(0, -1);
-        otherSeasons.forEach(function(season) {
-          episodePromise = episodePromise.then(function() {
-            return getEpisodesFromSeason(contentId, season.id, platform, 1);
-          }).then(function(seasonEpisodes) {
-            allEpisodes.push(...seasonEpisodes);
-          });
-        });
-      }
-      return episodePromise.then(function() {
-        console.log(`[NetMirror] Loaded ${allEpisodes.filter((ep) => ep !== null).length} total episodes`);
-        return {
-          id: contentId,
-          title: postData.title,
-          description: postData.desc,
-          year: postData.year,
-          episodes: allEpisodes,
-          seasons: postData.season || [],
-          isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
-        };
-      });
-    }
-    return {
-      id: contentId,
-      title: postData.title,
-      description: postData.desc,
-      year: postData.year,
-      episodes: allEpisodes,
-      seasons: postData.season || [],
-      isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
-    };
-  });
-}
+        episodePromise = episodeP// Replace the getStreamingLinks function in netmirror (14).js with this:
 
 function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title}`);
@@ -282,9 +243,9 @@ function getStreamingLinks(contentId, title, platform) {
     };
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
-    // Ensure Netflix uses the /tv/ endpoint to generate valid tokens
+    // Use same endpoints as version 8
     const playlistEndpoints = {
-      netflix: `${NETMIRROR_BASE}/tv/playlist.php`,
+      netflix: `${NETMIRROR_BASE}/playlist.php`,
       primevideo: `${NETMIRROR_BASE}/pv/playlist.php`,
       disney: `${NETMIRROR_BASE}/mobile/hs/playlist.php`
     };
@@ -296,7 +257,9 @@ function getStreamingLinks(contentId, title, platform) {
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
-          "Referer": platform === "disney" ? `${NETMIRROR_BASE}/mobile/hs/home` : `${NETMIRROR_BASE}/tv/home`
+          "Referer": platform === "disney" 
+            ? `${NETMIRROR_BASE}/mobile/hs/home` 
+            : `${NETMIRROR_BASE}/tv/home`
         })
       }
     );
@@ -309,12 +272,13 @@ function getStreamingLinks(contentId, title, platform) {
     }
     const sources = [];
     const subtitles = [];
+    
     playlist.forEach((item) => {
       if (item.sources) {
         item.sources.forEach((source) => {
           let file = source.file;
           
-          // 1. Netflix Fix: Strip /tv/ from the path if present
+          // Clean the path (keep from version 14)
           if (file.includes("/tv/")) {
             file = file.replace("/tv/", "/");
           }
@@ -323,58 +287,43 @@ function getStreamingLinks(contentId, title, platform) {
           if (file.startsWith("//")) {
             fullUrl = "https:" + file;
           } else if (file.startsWith("/")) {
-            // 2. Prime Video Fix: Ensure path has /pv/ if missing
-            if (platform.toLowerCase() === "primevideo" && !file.startsWith("/pv/")) {
-              fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/pv" + file;
-            } else {
-              fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + file;
-            }
+            // Use version 8's simpler URL construction
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + file;
           } else if (file.startsWith("http")) {
             fullUrl = file;
           } else {
-            // Relative path handling
-             if (platform.toLowerCase() === "primevideo" && !file.startsWith("pv/")) {
-               fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/pv/" + file;
-             } else {
-               fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + file;
-             }
+            fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + file;
           }
 
+          // Use version 8's header structure
+          const isPrime = platform.toLowerCase() === "primevideo";
           const isDisney = platform.toLowerCase() === "disney";
-const isNetflix = platform.toLowerCase() === "netflix";
-const isPrime = platform.toLowerCase() === "primevideo";
+          
+          const streamHeaders = {
+            "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
+            "Origin": "https://net51.cc",
+            "Referer": isDisney
+              ? "https://net51.cc/mobile/hs/home"
+              : "https://net51.cc/tv/home",
+            "Cookie": "hd=on",
+            "User-Agent": isDisney
+              ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
+              : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          };
 
-const streamHeaders = {
-  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
-  "Origin": "https://net51.cc",
-  "Referer": isDisney
-    ? "https://net51.cc/mobile/hs/home"
-    : isNetflix
-    ? "https://net51.cc/home"
-    : "https://net51.cc/tv/home",
-  "User-Agent": isDisney
-    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
-    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-};
-
-/* 🔑 Platform-specific requirements */
-if (isPrime) {
-  streamHeaders["Cookie"] = "hd=on; ott=pv";
-  streamHeaders["Range"] = "bytes=0-";
-} else {
-  streamHeaders["Cookie"] = "hd=on";
-}
-
-          // REMOVED: The Range header block that was causing Error 22004
+          if (isPrime) {
+            streamHeaders["Range"] = "bytes=0-";
+          }
 
           sources.push({
-  url: fullUrl,
-  quality: source.label,
-  type: source.type || "application/x-mpegURL",
-  headers: { ...streamHeaders }   // ✅ clone per stream
-});
+            url: fullUrl,
+            quality: source.label,
+            type: source.type || "application/x-mpegURL",
+            headers: streamHeaders
+          });
         });
       }
+      
       if (item.tracks) {
         item.tracks.filter((track) => track.kind === "captions").forEach((track) => {
           let fullSubUrl = track.file;
@@ -390,9 +339,27 @@ if (isPrime) {
         });
       }
     });
+    
+    console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     return { sources, subtitles };
   });
-}
+}romise.then(function() {
+          return getEpisodesFromSeason(contentId, postData.nextPageSeason, platform, 2);
+        }).then(function(additionalEpisodes) {
+          allEpisodes.push(...additionalEpisodes);
+        });
+      }
+      if (postData.season && postData.season.length > 1) {
+        const otherSeasons = postData.season.slice(0, -1);
+        otherSeasons.forEach(function(season) {
+          episodePromise = episodePromise.then(function() {
+            return getEpisodesFromSeason(contentId, season.id, platform, 1);
+          }).then(function(seasonEpisodes) {
+            allEpisodes.push(...seasonEpisodes);
+          });
+        });
+      }
+     
 
 
 function findEpisodeId(episodes, season, episode) {
@@ -550,26 +517,34 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
 
               // FIX: Map sources to the required format
               const streams = streamData.sources.map((source) => {
-                let quality = "HD";
-                const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
-                if (urlQualityMatch) {
-                  quality = urlQualityMatch[1];
-                } else if (source.quality) {
-                  const labelQualityMatch = source.quality.match(/(\d+p)/i);
-                  if (labelQualityMatch) {
-                    quality = labelQualityMatch[1];
-                  } else {
-                    const normalizedQuality = source.quality.toLowerCase();
-                    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
-                      quality = "1080p";
-                    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
-                      quality = "720p";
-                    } else if (normalizedQuality.includes("480")) {
-                      quality = "480p";
-                    } else {
-                      quality = source.quality;
-                    }
-                  }
+                // In the streams.map function within getStreams:
+let quality = "HD";
+const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
+if (urlQualityMatch) {
+  quality = urlQualityMatch[1];
+} else if (source.quality) {
+  const labelQualityMatch = source.quality.match(/(\d+p)/i);
+  if (labelQualityMatch) {
+    quality = labelQualityMatch[1];
+  } else {
+    const normalizedQuality = source.quality.toLowerCase();
+    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
+      quality = "1080p";
+    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
+      quality = "720p";
+    } else if (normalizedQuality.includes("480")) {
+      quality = "480p";
+    } else {
+      quality = source.quality;
+    }
+  }
+} else if (source.url.includes("720p")) {
+  quality = "720p";
+} else if (source.url.includes("480p")) {
+  quality = "480p";
+} else if (source.url.includes("1080p")) {
+  quality = "1080p";
+}
                 }
 
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
