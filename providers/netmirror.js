@@ -97,13 +97,11 @@ function searchContent(query, platform) {
   const ott = ottMap[platform.toLowerCase()] || "nf";
   return bypass().then(function(cookie) {
     const cookies = {
-      "t_hash_t": cookie,
-      "user_token": platform.toLowerCase() === "primevideo" 
-        ? "63fb201abb521d0dfdce03bc5dcda456"
-        : "233123f803cf02184bf6c67e149cdd50",
-      "hd": "on",
-      "ott": ott
-    };
+    "t_hash_t": cookie,
+    "user_token": "a0a5f663894ade410614071fe46baca6", // ← CLOUDSTREAM TOKEN
+    "ott": ott,
+    "hd": "on"
+};
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     const searchEndpoints = {
       "netflix": `${NETMIRROR_BASE}search.php`,
@@ -145,13 +143,11 @@ function getEpisodesFromSeason(seriesId, seasonId, platform, page) {
   const ott = ottMap[platform.toLowerCase()] || "nf";
   return bypass().then(function(cookie) {
     const cookies = {
-      "t_hash_t": cookie,
-      "user_token": platform.toLowerCase() === "primevideo" 
-        ? "63fb201abb521d0dfdce03bc5dcda456"
-        : "233123f803cf02184bf6c67e149cdd50",
-      "ott": ott,
-      "hd": "on"
-    };
+    "t_hash_t": cookie,
+    "user_token": "a0a5f663894ade410614071fe46baca6", // ← CLOUDSTREAM TOKEN
+    "ott": ott,
+    "hd": "on"
+};
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     const episodes = [];
     let currentPage = page || 1;
@@ -199,13 +195,11 @@ function loadContent(contentId, platform) {
   const ott = ottMap[platform.toLowerCase()] || "nf";
   return bypass().then(function(cookie) {
     const cookies = {
-      "t_hash_t": cookie,
-      "user_token": platform.toLowerCase() === "primevideo" 
-        ? "63fb201abb521d0dfdce03bc5dcda456"
-        : "233123f803cf02184bf6c67e149cdd50",
-      "ott": ott,
-      "hd": "on"
-    };
+    "t_hash_t": cookie,
+    "user_token": "a0a5f663894ade410614071fe46baca6", // ← CLOUDSTREAM TOKEN
+    "ott": ott,
+    "hd": "on"
+};
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     const postEndpoints = {
       "netflix": `${NETMIRROR_BASE}post.php`,
