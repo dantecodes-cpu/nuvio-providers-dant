@@ -269,7 +269,8 @@ function loadContent(contentId, platform) {
     };
   });
 }
-function getStreamingLinks(contentId, title, platform) {
+
+    function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title} on ${platform}`);
   const ottMap = {
     "netflix": "nf",
@@ -298,8 +299,12 @@ function getStreamingLinks(contentId, title, platform) {
     
     console.log(`[NetMirror] Using playlist URL: ${playlistUrl}`);
     
+    // Add authentication parameter
+    const timestamp = getUnixTime();
+    const authToken = generateAuthToken(contentId, platform, timestamp);
+    
     return makeRequest(
-      `${playlistUrl}?id=${contentId}&tm=${getUnixTime()}`,
+      `${playlistUrl}?id=${contentId}&in=${authToken}&tm=${timestamp}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
@@ -319,6 +324,7 @@ function getStreamingLinks(contentId, title, platform) {
     
     const sources = [];
     const subtitles = [];
+    const timestamp = getUnixTime();
     
     playlist.forEach((item) => {
       if (item.sources) {
@@ -351,6 +357,11 @@ function getStreamingLinks(contentId, title, platform) {
           
           // Clean up URL
           fullUrl = fullUrl.replace(/([^:])\/\//g, "$1/");
+          
+          // Add proper authentication to the stream URL
+          const streamAuthToken = generateStreamAuthToken(contentId, platform);
+          const separator = fullUrl.includes("?") ? "&" : "?";
+          fullUrl = `${fullUrl}${separator}in=${streamAuthToken}`;
           
           sources.push({
             url: fullUrl,
@@ -385,6 +396,48 @@ function getStreamingLinks(contentId, title, platform) {
     return { sources: [], subtitles: [] };
   });
 }
+
+// Helper function to generate authentication tokens for playlist requests
+function generateAuthToken(contentId, platform, timestamp) {
+  // This matches the format: token1::token2::timestamp::ni
+  const token1 = "63fb201abb521d0dfdce03bc5dcda456";
+  const token2 = generateContentHash(contentId, timestamp);
+  
+  return `${token1}::${token2}::${timestamp}::ni`;
+}
+
+// Helper function to generate authentication tokens for stream URLs
+function generateStreamAuthToken(contentId, platform) {
+  const timestamp = getUnixTime();
+  const token1 = "63fb201abb521d0dfdce03bc5dcda456";
+  const token2 = generateContentHash(contentId, timestamp);
+  
+  // Return either format depending on platform
+  if (platform.toLowerCase() === "primevideo") {
+    // For Prime Video: token1::token2::timestamp::ni
+    return `${token1}::${token2}::${timestamp}::ni`;
+  } else {
+    // For Netflix/Disney: token1::token2::timestamp::ni
+    return `${token1}::${token2}::${timestamp}::ni`;
+  }
+}
+
+// Generate hash for authentication
+function generateContentHash(contentId, timestamp) {
+  // Create a consistent hash based on content ID and timestamp
+  const baseStr = `${contentId}${timestamp}net51`;
+  let hash = 0;
+  
+  for (let i = 0; i < baseStr.length; i++) {
+    const char = baseStr.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  
+  // Ensure it's a positive 8-character hex
+  return Math.abs(hash).toString(16).substring(0, 8);
+}
+
 function findEpisodeId(episodes, season, episode) {
   if (!episodes || episodes.length === 0) {
     console.log("[NetMirror] No episodes found in content data");
@@ -421,24 +474,34 @@ function findEpisodeId(episodes, season, episode) {
     return null;
   }
 }
+
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
-  console.log(`[NetMirror] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
+  console.log(`[NetMirror] ======= START getStreams =======`);
+  console.log(`[NetMirror] Input: TMDB ID=${tmdbId}, Type=${mediaType}, Season=${seasonNum}, Episode=${episodeNum}`);
+  
   const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+  
   return makeRequest(tmdbUrl).then(function(tmdbResponse) {
     return tmdbResponse.json();
   }).then(function(tmdbData) {
     var _a, _b;
     const title = mediaType === "tv" ? tmdbData.name : tmdbData.title;
     const year = mediaType === "tv" ? (_a = tmdbData.first_air_date) == null ? void 0 : _a.substring(0, 4) : (_b = tmdbData.release_date) == null ? void 0 : _b.substring(0, 4);
+    
     if (!title) {
       throw new Error("Could not extract title from TMDB response");
     }
+    
     console.log(`[NetMirror] TMDB Info: "${title}" (${year})`);
+    
     let platforms = ["netflix", "primevideo", "disney"];
     if (title.toLowerCase().includes("boys") || title.toLowerCase().includes("prime")) {
       platforms = ["primevideo", "netflix", "disney"];
     }
+    
+    console.log(`[NetMirror] Will try platforms in order: ${platforms.join(", ")}`);
     console.log(`[NetMirror] Will try search queries: "${title}" and "${title} ${year}"`);
+    
     function calculateSimilarity(str1, str2) {
       const s1 = str1.toLowerCase().trim();
       const s2 = str2.toLowerCase().trim();
@@ -462,6 +525,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       }
       return 0;
     }
+    
     function filterRelevantResults(searchResults, query) {
       const filtered = searchResults.filter((result) => {
         const similarity = calculateSimilarity(result.title, query);
@@ -473,24 +537,30 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         return simB - simA;
       });
     }
+    
     function tryPlatform(platformIndex) {
       if (platformIndex >= platforms.length) {
         console.log("[NetMirror] No content found on any platform");
         return [];
       }
+      
       const platform = platforms[platformIndex];
       console.log(`[NetMirror] Trying platform: ${platform}`);
+      
       function trySearch(withYear) {
         const searchQuery = withYear ? `${title} ${year}` : title;
         console.log(`[NetMirror] Searching for: "${searchQuery}"`);
+        
         return searchContent(searchQuery, platform).then(function(searchResults) {
           if (searchResults.length === 0) {
             if (!withYear && year) {
               console.log(`[NetMirror] No results for "${title}", trying with year...`);
               return trySearch(true);
             }
+            console.log(`[NetMirror] No results found for "${searchQuery}" on ${platform}`);
             return null;
           }
+          
           const relevantResults = filterRelevantResults(searchResults, title);
           if (relevantResults.length === 0) {
             console.log(`[NetMirror] Found ${searchResults.length} results but none were relevant enough`);
@@ -500,11 +570,14 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
             }
             return null;
           }
+          
           const selectedContent = relevantResults[0];
           console.log(`[NetMirror] Selected: ${selectedContent.title} (ID: ${selectedContent.id}) - filtered from ${searchResults.length} results`);
+          
           return loadContent(selectedContent.id, platform).then(function(contentData) {
             let targetContentId = selectedContent.id;
             let episodeData = null;
+            
             if (mediaType === "tv" && !contentData.isMovie) {
               const validEpisodes = contentData.episodes.filter((ep) => ep !== null);
               episodeData = validEpisodes.find((ep) => {
@@ -521,6 +594,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 }
                 return epSeason === (seasonNum || 1) && epNumber === (episodeNum || 1);
               });
+              
               if (episodeData) {
                 targetContentId = episodeData.id;
                 console.log(`[NetMirror] Found episode ID: ${episodeData.id}`);
@@ -529,14 +603,17 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 return null;
               }
             }
+            
             return getStreamingLinks(targetContentId, title, platform).then(function(streamData) {
               if (!streamData.sources || streamData.sources.length === 0) {
                 console.log(`[NetMirror] No streaming links found`);
                 return null;
               }
+              
               const streams = streamData.sources.map((source) => {
                 let quality = "HD";
                 const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
+                
                 if (urlQualityMatch) {
                   quality = urlQualityMatch[1];
                 } else if (source.quality) {
@@ -562,6 +639,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 } else if (source.url.includes("1080p")) {
                   quality = "1080p";
                 }
+                
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
                   const episodeName = episodeData && episodeData.t ? episodeData.t : "";
@@ -574,17 +652,22 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 // Platform-specific headers
                 const isPrime = platform.toLowerCase() === "primevideo";
                 const isDisney = platform.toLowerCase() === "disney";
+                const ott = ottMap[platform.toLowerCase()] || "nf";
                 
                 const streamHeaders = {
-                  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
+                  "Accept": "*/*",
+                  "Accept-Language": "en-US,en;q=0.9",
                   "Origin": "https://net51.cc",
                   "Referer": isDisney
                     ? "https://net51.cc/mobile/hs/home"
+                    : isPrime
+                    ? "https://net51.cc/pv/home"
                     : "https://net51.cc/tv/home",
-                  "Cookie": `hd=on; t_hash_t=${globalCookie || ""}; user_token=233123f803cf02184bf6c67e149cdd50; ott=${ottMap[platform.toLowerCase()] || "nf"}`,
-                  "User-Agent": isDisney
-                    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
-                    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                  "Cookie": `hd=on; t_hash_t=${globalCookie || ""}; user_token=233123f803cf02184bf6c67e149cdd50; ott=${ott}`,
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                  "Sec-Fetch-Dest": "empty",
+                  "Sec-Fetch-Mode": "cors",
+                  "Sec-Fetch-Site": "same-origin"
                 };
                 
                 if (isPrime) {
@@ -596,7 +679,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                   title: streamTitle,
                   url: source.url,
                   quality,
-                  type: (source.type || "").includes("mpegURL") ? "hls" : "direct",
+                  type: (source.type || "").toLowerCase().includes("mpegurl") ? "hls" : "direct",
                   headers: streamHeaders
                 };
               });
@@ -641,8 +724,11 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
     return tryPlatform(0);
     
   }).catch(function(error) {
-    console.error(`[NetMirror] Error in getStreams: ${error.message}`);
+    console.error(`[NetMirror] Error in getStreams:`, error);
+    console.error(`[NetMirror] Stack trace:`, error.stack);
     return [];
+  }).finally(() => {
+    console.log(`[NetMirror] ======= END getStreams =======`);
   });
 }
 
@@ -650,4 +736,4 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = { getStreams };
 } else {
   global.getStreams = getStreams;
-}
+  }
