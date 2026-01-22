@@ -1,4 +1,4 @@
-var __defProp = Object.defineProperty;
+ivar __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
 var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -540,11 +540,15 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 return null;
               }
             }
+            // ... (keep all code above the streams mapping identical)
+
             return getStreamingLinks(targetContentId, title, platform).then(function(streamData) {
               if (!streamData.sources || streamData.sources.length === 0) {
                 console.log(`[NetMirror] No streaming links found`);
                 return null;
               }
+
+              // FIX: Map sources to the required format
               const streams = streamData.sources.map((source) => {
                 let quality = "HD";
                 const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
@@ -566,68 +570,44 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                       quality = source.quality;
                     }
                   }
-                } else if (source.url.includes("720p")) {
-                  quality = "720p";
-                } else if (source.url.includes("480p")) {
-                  quality = "480p";
-                } else if (source.url.includes("1080p")) {
-                  quality = "1080p";
                 }
+
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
                   const episodeName = episodeData && episodeData.t ? episodeData.t : "";
                   streamTitle += ` S${seasonNum}E${episodeNum}`;
-                  if (episodeName) {
-                    streamTitle += ` - ${episodeName}`;
-                  }
+                  if (episodeName) streamTitle += ` - ${episodeName}`;
                 }
-                const lowerPlatform = (platform || "").toLowerCase();
-                const isNfOrPv = lowerPlatform === "netflix" || lowerPlatform === "primevideo";
-                
-
-const isPrime = platform === "primevideo";
-const isDisney = platform === "disney";
-const isNetflix = platform === "netflix";
-
 
                 return {
-  name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
-  title: streamTitle,
-  url: source.url,
-  quality,
-  type: (source.type || "").includes("mpegURL") ? "hls" : "direct",
-  headers: source.headers
-};
+                  name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
+                  title: streamTitle,
+                  url: source.url,
+                  quality,
+                  type: (source.type || "").includes("mpegURL") ? "hls" : "direct",
+                  headers: source.headers
+                };
+              }); // Added missing closing parenthesis for .map()
+
+              // FIX: Sort the streams by quality
               streams.sort((a, b) => {
-                if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
-                  return -1;
-                }
-                if (b.quality.toLowerCase() === "auto" && a.quality.toLowerCase() !== "auto") {
-                  return 1;
-                }
-                const parseQuality = (quality) => {
-                  const match = quality.match(/(\d{3,4})p/i);
+                const parseQuality = (q) => {
+                  const match = q.match(/(\d+)/);
                   return match ? parseInt(match[1], 10) : 0;
                 };
-                const qualityA = parseQuality(a.quality);
-                const qualityB = parseQuality(b.quality);
-                return qualityB - qualityA;
+                return parseQuality(b.quality) - parseQuality(a.quality);
               });
+
               console.log(`[NetMirror] Successfully processed ${streams.length} streams from ${platform}`);
               return streams;
-            });
+            }); // Added missing closing for .then()
           });
         });
       }
       return trySearch(false).then(function(result) {
-        if (result) {
-          return result;
-        } else {
-          console.log(`[NetMirror] No content found on ${platform}, trying next platform`);
-          return tryPlatform(platformIndex + 1);
-        }
+        if (result) return result;
+        return tryPlatform(platformIndex + 1);
       }).catch(function(error) {
-        console.log(`[NetMirror] Error on ${platform}: ${error.message}, trying next platform`);
         return tryPlatform(platformIndex + 1);
       });
     }
@@ -637,6 +617,7 @@ const isNetflix = platform === "netflix";
     return [];
   });
 }
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { getStreams };
 } else {
