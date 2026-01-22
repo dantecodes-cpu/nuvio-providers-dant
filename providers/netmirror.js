@@ -368,11 +368,11 @@ if (isPrime) {
           // REMOVED: The Range header block that was causing Error 22004
 
           sources.push({
-            url: fullUrl,
-            quality: source.label,
-            type: source.type || "application/x-mpegURL",
-            headers: streamHeaders
-          });
+  url: fullUrl,
+  quality: source.label,
+  type: source.type || "application/x-mpegURL",
+  headers: { ...streamHeaders }   // ✅ clone per stream
+});
         });
       }
       if (item.tracks) {
