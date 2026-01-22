@@ -589,28 +589,15 @@ const isPrime = platform === "primevideo";
 const isDisney = platform === "disney";
 const isNetflix = platform === "netflix";
 
-const streamHeaders = {
-  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
-  "Origin": "https://net51.cc",
-  "Referer": isDisney
-    ? "https://net51.cc/mobile/hs/home"
-    : isNetflix
-    ? "https://net51.cc/home"
-    : "https://net51.cc/tv/home",
-  "Cookie": "hd=on",
-  "User-Agent": isDisney
-    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
-    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-};
+
                 return {
-                  name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
-                  title: streamTitle,
-                  url: source.url,
-                  quality,
-                  type: source.type.includes("mpegURL") ? "hls" : "direct",
-                  headers: streamHeaders
-                };
-              });
+  name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
+  title: streamTitle,
+  url: source.url,
+  quality,
+  type: source.type.includes("mpegURL") ? "hls" : "direct",
+  headers: source.headers   // ✅ USE THIS
+};
               streams.sort((a, b) => {
                 if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
                   return -1;
