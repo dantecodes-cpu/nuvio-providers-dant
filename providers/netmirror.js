@@ -223,7 +223,46 @@ function loadContent(contentId, platform) {
       console.log("[NetMirror] Loading episodes from all seasons...");
       let episodePromise = Promise.resolve();
       if (postData.nextPageShow === 1 && postData.nextPageSeason) {
-        episodePromise = episodeP// Replace the getStreamingLinks function in netmirror (14).js with this:
+        episodePromise = episodePromise.then(function() {
+          return getEpisodesFromSeason(contentId, postData.nextPageSeason, platform, 2);
+        }).then(function(additionalEpisodes) {
+          allEpisodes.push(...additionalEpisodes);
+        });
+      }
+      if (postData.season && postData.season.length > 1) {
+        const otherSeasons = postData.season.slice(0, -1);
+        otherSeasons.forEach(function(season) {
+          episodePromise = episodePromise.then(function() {
+            return getEpisodesFromSeason(contentId, season.id, platform, 1);
+          }).then(function(seasonEpisodes) {
+            allEpisodes.push(...seasonEpisodes);
+          });
+        });
+      }
+      return episodePromise.then(function() {
+        console.log(`[NetMirror] Loaded ${allEpisodes.filter((ep) => ep !== null).length} total episodes`);
+        return {
+          id: contentId,
+          title: postData.title,
+          description: postData.desc,
+          year: postData.year,
+          episodes: allEpisodes,
+          seasons: postData.season || [],
+          isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
+        };
+      });
+    }
+    return {
+      id: contentId,
+      title: postData.title,
+      description: postData.desc,
+      year: postData.year,
+      episodes: allEpisodes,
+      seasons: postData.season || [],
+      isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
+    };
+  });
+}
 
 function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title}`);
@@ -343,24 +382,7 @@ function getStreamingLinks(contentId, title, platform) {
     console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     return { sources, subtitles };
   });
-}romise.then(function() {
-          return getEpisodesFromSeason(contentId, postData.nextPageSeason, platform, 2);
-        }).then(function(additionalEpisodes) {
-          allEpisodes.push(...additionalEpisodes);
-        });
-      }
-      if (postData.season && postData.season.length > 1) {
-        const otherSeasons = postData.season.slice(0, -1);
-        otherSeasons.forEach(function(season) {
-          episodePromise = episodePromise.then(function() {
-            return getEpisodesFromSeason(contentId, season.id, platform, 1);
-          }).then(function(seasonEpisodes) {
-            allEpisodes.push(...seasonEpisodes);
-          });
-        });
-      }
-     
-
+}
 
 function findEpisodeId(episodes, season, episode) {
   if (!episodes || episodes.length === 0) {
@@ -494,107 +516,4 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                   epSeason = parseInt(ep.season);
                   epNumber = parseInt(ep.episode);
                 } else if (ep.season_number && ep.episode_number) {
-                  epSeason = parseInt(ep.season_number);
-                  epNumber = parseInt(ep.episode_number);
-                }
-                return epSeason === (seasonNum || 1) && epNumber === (episodeNum || 1);
-              });
-              if (episodeData) {
-                targetContentId = episodeData.id;
-                console.log(`[NetMirror] Found episode ID: ${episodeData.id}`);
-              } else {
-                console.log(`[NetMirror] Episode S${seasonNum}E${episodeNum} not found`);
-                return null;
-              }
-            }
-            // ... (keep all code above the streams mapping identical)
-
-            return getStreamingLinks(targetContentId, title, platform).then(function(streamData) {
-              if (!streamData.sources || streamData.sources.length === 0) {
-                console.log(`[NetMirror] No streaming links found`);
-                return null;
-              }
-
-              // FIX: Map sources to the required format
-              const streams = streamData.sources.map((source) => {
-                // In the streams.map function within getStreams:
-let quality = "HD";
-const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
-if (urlQualityMatch) {
-  quality = urlQualityMatch[1];
-} else if (source.quality) {
-  const labelQualityMatch = source.quality.match(/(\d+p)/i);
-  if (labelQualityMatch) {
-    quality = labelQualityMatch[1];
-  } else {
-    const normalizedQuality = source.quality.toLowerCase();
-    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
-      quality = "1080p";
-    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
-      quality = "720p";
-    } else if (normalizedQuality.includes("480")) {
-      quality = "480p";
-    } else {
-      quality = source.quality;
-    }
-  }
-} else if (source.url.includes("720p")) {
-  quality = "720p";
-} else if (source.url.includes("480p")) {
-  quality = "480p";
-} else if (source.url.includes("1080p")) {
-  quality = "1080p";
-}
-                }
-
-                let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
-                if (mediaType === "tv") {
-                  const episodeName = episodeData && episodeData.t ? episodeData.t : "";
-                  streamTitle += ` S${seasonNum}E${episodeNum}`;
-                  if (episodeName) streamTitle += ` - ${episodeName}`;
-                }
-
-                return {
-                  name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
-                  title: streamTitle,
-                  url: source.url,
-                  quality,
-                  type: (source.type || "").includes("mpegURL") ? "hls" : "direct",
-                  headers: source.headers
-                };
-              }); // Added missing closing parenthesis for .map()
-
-              // FIX: Sort the streams by quality
-              streams.sort((a, b) => {
-                const parseQuality = (q) => {
-                  const match = q.match(/(\d+)/);
-                  return match ? parseInt(match[1], 10) : 0;
-                };
-                return parseQuality(b.quality) - parseQuality(a.quality);
-              });
-
-              console.log(`[NetMirror] Successfully processed ${streams.length} streams from ${platform}`);
-              return streams;
-            }); // Added missing closing for .then()
-          });
-        });
-      }
-      return trySearch(false).then(function(result) {
-        if (result) return result;
-        return tryPlatform(platformIndex + 1);
-      }).catch(function(error) {
-        return tryPlatform(platformIndex + 1);
-      });
-    }
-    return tryPlatform(0);
-  }).catch(function(error) {
-    console.error(`[NetMirror] Error in getStreams: ${error.message}`);
-    return [];
-  });
-}
-
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = { getStreams };
-} else {
-  global.getStreams = getStreams;
-}
+        
