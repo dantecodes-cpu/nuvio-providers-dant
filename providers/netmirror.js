@@ -264,7 +264,24 @@ function loadContent(contentId, platform) {
   });
 }
 
-function getStreamingLinks(contentId, title, platform) {
+function generateHash(input) {
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    const char = input.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+function generateAuthToken(contentId, platform, timestamp) {
+  // Based on your examples: token1::token2::timestamp::ni
+  const token1 = "63fb201abb521d0dfdce03bc5dcda456";
+  const token2 = generateHash(contentId + platform + timestamp);
+  return `${token1}::${token2}::${timestamp}::ni`;
+}
+
 function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title}`);
   const ottMap = {
@@ -283,7 +300,6 @@ function getStreamingLinks(contentId, title, platform) {
     };
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
-    // Use different endpoints for different platforms
     const playlistEndpoints = {
       netflix: `${NETMIRROR_BASE}/playlist.php`,
       primevideo: `${NETMIRROR_BASE}/pv/playlist.php`,
@@ -292,17 +308,8 @@ function getStreamingLinks(contentId, title, platform) {
 
     const playlistUrl = playlistEndpoints[platform.toLowerCase()] || playlistEndpoints.netflix;
     
-    // Add proper query parameters for authentication
-    const queryParams = new URLSearchParams({
-      id: contentId,
-      t: encodeURIComponent(title),
-      tm: getUnixTime(),
-      // Add authentication parameters that the server expects
-      in: "63fb201abb521d0dfdce03bc5dcda456"  // This appears to be a required auth token
-    });
-    
     return makeRequest(
-      `${playlistUrl}?${queryParams.toString()}`,
+      `${playlistUrl}?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
@@ -327,7 +334,6 @@ function getStreamingLinks(contentId, title, platform) {
         item.sources.forEach((source) => {
           let file = source.file;
           
-          // Fix URL construction - preserve the authentication tokens
           let fullUrl;
           
           if (file.startsWith("//")) {
@@ -335,28 +341,22 @@ function getStreamingLinks(contentId, title, platform) {
           } else if (file.startsWith("http")) {
             fullUrl = file;
           } else if (file.startsWith("/")) {
-            // Absolute path - just append to base
             fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + file;
           } else {
-            // Relative path
             if (platform.toLowerCase() === "primevideo" && !file.includes("/pv/")) {
-              // For Prime Video, ensure path starts with /pv/
               fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/pv/" + file;
             } else if (platform.toLowerCase() === "disney" && !file.includes("/hs/")) {
-              // For Disney, ensure path starts with /mobile/hs/
               fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/mobile/hs/" + file;
             } else {
               fullUrl = NETMIRROR_BASE.replace(/\/$/, "") + "/" + file;
             }
           }
           
-          // Clean up double slashes but preserve the query parameters
           fullUrl = fullUrl.replace(/([^:])\/\//g, "$1/");
           
-          // If the URL doesn't have proper authentication tokens, add them
+          // Add authentication token if missing
           if (!fullUrl.includes("?in=") || fullUrl.includes("in=unknown")) {
             const timestamp = getUnixTime();
-            // Generate a proper authentication token
             const authToken = generateAuthToken(contentId, platform, timestamp);
             
             if (fullUrl.includes("?")) {
@@ -395,27 +395,6 @@ function getStreamingLinks(contentId, title, platform) {
     console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     return { sources, subtitles };
   });
-}
-
-// Helper function to generate authentication tokens
-function generateAuthToken(contentId, platform, timestamp) {
-  // This needs to match the server's expected format
-  // Based on your examples: token1::token2::timestamp::ni
-  const token1 = "63fb201abb521d0dfdce03bc5dcda456"; // This seems constant
-  const token2 = generateHash(contentId + platform + timestamp);
-  
-  return `${token1}::${token2}::${timestamp}::ni`;
-}
-
-function generateHash(input) {
-  // Simple hash function - you might need to adjust this
-  let hash = 0;
-  for (let i = 0; i < input.length; i++) {
-    const char = input.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(16);
 }
 
 function findEpisodeId(episodes, season, episode) {
@@ -507,13 +486,17 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         return simB - simA;
       });
     }
-        function tryPlatform(platformIndex) {
+    
+    function tryPlatform(platformIndex) {
       if (platformIndex >= platforms.length) {
         console.log("[NetMirror] No content found on any platform");
         return [];
       }
       const platform = platforms[platformIndex];
+      const ott = platform === "netflix" ? "nf" : platform === "primevideo" ? "pv" : "hs";
+      
       console.log(`[NetMirror] Trying platform: ${platform}`);
+      
       function trySearch(withYear) {
         const searchQuery = withYear ? `${title} ${year}` : title;
         console.log(`[NetMirror] Searching for: "${searchQuery}"`);
@@ -596,6 +579,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 } else if (source.url.includes("1080p")) {
                   quality = "1080p";
                 }
+                
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
                   const episodeName = episodeData && episodeData.t ? episodeData.t : "";
@@ -605,28 +589,27 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                   }
                 }
                 
-                // Platform-specific headers (from version 8)
                 const isPrime = platform.toLowerCase() === "primevideo";
                 const isDisney = platform.toLowerCase() === "disney";
                 const isNetflix = platform.toLowerCase() === "netflix";
-// In the streams.map function, update the headers:
-const streamHeaders = {
-  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
-  "Origin": "https://net51.cc",
-  "Referer": isDisney
-    ? "https://net51.cc/mobile/hs/home"
-    : isNetflix
-    ? "https://net51.cc/home"
-    : "https://net51.cc/tv/home",
-  "Cookie": `hd=on; t_hash_t=${globalCookie || ""}; user_token=233123f803cf02184bf6c67e149cdd50; ott=${ott}`,
-  "User-Agent": isDisney
-    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
-    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-};
 
-if (isPrime) {
-  streamHeaders["Range"] = "bytes=0-";
-}
+                const streamHeaders = {
+                  "Accept": "application/vnd.apple.mpegurl, video/mp4, */*",
+                  "Origin": "https://net51.cc",
+                  "Referer": isDisney
+                    ? "https://net51.cc/mobile/hs/home"
+                    : isNetflix
+                    ? "https://net51.cc/home"
+                    : "https://net51.cc/tv/home",
+                  "Cookie": `hd=on; t_hash_t=${globalCookie || ""}; user_token=233123f803cf02184bf6c67e149cdd50; ott=${ott}`,
+                  "User-Agent": isDisney
+                    ? "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120"
+                    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                };
+
+                if (isPrime) {
+                  streamHeaders["Range"] = "bytes=0-";
+                }
                 
                 return {
                   name: `NetMirror (${platform.charAt(0).toUpperCase() + platform.slice(1)})`,
@@ -638,7 +621,6 @@ if (isPrime) {
                 };
               });
               
-              // Sort streams by quality (highest first)
               streams.sort((a, b) => {
                 if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
                   return -1;
@@ -676,7 +658,6 @@ if (isPrime) {
     }
     
     return tryPlatform(0);
-    
   }).catch(function(error) {
     console.error(`[NetMirror] Error in getStreams: ${error.message}`);
     return [];
