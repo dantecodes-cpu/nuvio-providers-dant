@@ -307,10 +307,6 @@ function getStreamingLinks(contentId, title, platform) {
     }
     const sources = [];
     const subtitles = [];
-    
-    // Cloudstream's static user token
-    const cloudstreamToken = "a0a5f663894ade410614071fe46baca6";
-    
     playlist.forEach((item) => {
       if (item.sources) {
         item.sources.forEach((source) => {
@@ -331,62 +327,12 @@ function getStreamingLinks(contentId, title, platform) {
               fullUrl = "https://net51.cc" + fullUrl;
             }
           }
+          // ❌ Do NOTHING else to the URL
           
-          // Create quality variants like Cloudstream does
-          const qualities = ["1080p", "720p", "480p", "360p", "Auto"];
-          
-          qualities.forEach(quality => {
-            let variantUrl = fullUrl;
-            
-            // For Auto quality, keep original URL (no q parameter)
-            if (quality !== "Auto") {
-              // Parse URL to add or replace q parameter
-              const urlParts = variantUrl.split('?');
-              const basePath = urlParts[0];
-              const queryString = urlParts[1] || '';
-              
-              // Parse query parameters
-              const params = new URLSearchParams(queryString);
-              
-              // Remove existing q/quality parameters
-              params.delete('q');
-              params.delete('quality');
-              
-              // Add the new q parameter FIRST
-              const newParams = new URLSearchParams();
-              newParams.append('q', quality);
-              
-              // Copy all other parameters
-              for (const [key, value] of params.entries()) {
-                newParams.append(key, value);
-              }
-              
-              // Rebuild URL with q parameter first
-              variantUrl = `${basePath}?${newParams.toString()}`;
-            }
-            
-            // Ensure URL has proper in= parameter format
-            if (variantUrl.includes('in=')) {
-              // Fix the in= parameter to use Cloudstream's token
-              const inMatch = variantUrl.match(/in=([^&]+)/);
-              if (inMatch) {
-                const inParts = inMatch[1].split('::');
-                if (inParts.length >= 4) {
-                  // Replace first part with Cloudstream's token
-                  inParts[0] = cloudstreamToken;
-                  // Update timestamp
-                  inParts[2] = getUnixTime().toString();
-                  const newInParam = inParts.join('::');
-                  variantUrl = variantUrl.replace(/in=[^&]+/, `in=${newInParam}`);
-                }
-              }
-            }
-            
-            sources.push({
-              url: variantUrl,
-              quality: quality,
-              type: source.type || "application/x-mpegURL"
-            });
+          sources.push({
+            url: fullUrl,
+            quality: source.label,
+            type: source.type || "application/x-mpegURL"
           });
         });
       }
@@ -405,22 +351,11 @@ function getStreamingLinks(contentId, title, platform) {
         });
       }
     });
-    
     console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     
-    // Debug: Show first few URLs
-    if (sources.length > 0) {
-      console.log(`[NetMirror] Sample URLs for ${platform}:`);
-      const qualitySamples = {};
-      sources.forEach(source => {
-        if (!qualitySamples[source.quality]) {
-          qualitySamples[source.quality] = source.url.substring(0, 120) + '...';
-        }
-      });
-      
-      Object.entries(qualitySamples).forEach(([quality, url]) => {
-        console.log(`  ${quality}: ${url}`);
-      });
+    // Debug log for PrimeVideo URLs
+    if (platform.toLowerCase() === "primevideo" && sources.length > 0) {
+      console.log(`[NetMirror] PrimeVideo sample URL: ${sources[0].url}`);
     }
     
     return { sources, subtitles };
@@ -640,8 +575,33 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
               }
               
               const streams = streamData.sources.map((source) => {
-                // Quality is already set in getStreamingLinks
-                const quality = source.quality;
+                let quality = "HD";
+                const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
+                if (urlQualityMatch) {
+                  quality = urlQualityMatch[1];
+                } else if (source.quality) {
+                  const labelQualityMatch = source.quality.match(/(\d+p)/i);
+                  if (labelQualityMatch) {
+                    quality = labelQualityMatch[1];
+                  } else {
+                    const normalizedQuality = source.quality.toLowerCase();
+                    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
+                      quality = "1080p";
+                    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
+                      quality = "720p";
+                    } else if (normalizedQuality.includes("480")) {
+                      quality = "480p";
+                    } else {
+                      quality = source.quality;
+                    }
+                  }
+                } else if (source.url.includes("720p")) {
+                  quality = "720p";
+                } else if (source.url.includes("480p")) {
+                  quality = "480p";
+                } else if (source.url.includes("1080p")) {
+                  quality = "1080p";
+                }
                 
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
@@ -669,18 +629,23 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 };
               });
               
-              // Sort by quality (1080p first, then 720p, etc.)
               streams.sort((a, b) => {
-                if (a.quality === "Auto" && b.quality !== "Auto") return 1;
-                if (b.quality === "Auto" && a.quality !== "Auto") return -1;
-                
-                const qualityOrder = ["1080p", "720p", "480p", "360p", "Auto"];
-                return qualityOrder.indexOf(a.quality) - qualityOrder.indexOf(b.quality);
+                if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
+                  return -1;
+                }
+                if (b.quality.toLowerCase() === "auto" && a.quality.toLowerCase() !== "auto") {
+                  return 1;
+                }
+                const parseQuality = (quality) => {
+                  const match = quality.match(/(\d{3,4})p/i);
+                  return match ? parseInt(match[1], 10) : 0;
+                };
+                const qualityA = parseQuality(a.quality);
+                const qualityB = parseQuality(b.quality);
+                return qualityB - qualityA;
               });
               
               console.log(`[NetMirror] Successfully processed ${streams.length} streams from ${platform}`);
-              console.log(`[NetMirror] Available qualities: ${[...new Set(streams.map(s => s.quality))].join(', ')}`);
-              
               return streams;
             });
           });
