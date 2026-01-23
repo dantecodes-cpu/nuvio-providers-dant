@@ -488,11 +488,7 @@ function getStreamingLinks(contentId, title, platform) {
 
 
 
-    
-    
-    return { sources, subtitles };
-  });
-}
+  
 function findEpisodeId(episodes, season, episode) {
   if (!episodes || episodes.length === 0) {
     console.log("[NetMirror] No episodes found in content data");
