@@ -320,16 +320,28 @@ const cookies = {
             if (fullUrl.startsWith("//")) {
               let fullUrl = source.file;
 
-// ✅ ONLY fix RELATIVE URLs
-if (!fullUrl.startsWith("http")) {
+// 🔒 SIGNED STREAM URL (Prime / NF / Disney)
+if (fullUrl.includes("?in=")) {
+  // DO NOT TOUCH — opaque signed URL
   if (fullUrl.startsWith("//")) {
     fullUrl = "https:" + fullUrl;
-  } else {
+  } else if (fullUrl.startsWith("/")) {
     fullUrl = "https://net51.cc" + fullUrl;
   }
-}
+} 
+// 🔓 NON-SIGNED URL (safe to normalize)
+else {
+  if (fullUrl.startsWith("//")) {
+    fullUrl = "https:" + fullUrl;
+  } else if (fullUrl.startsWith("/")) {
+    fullUrl = "https://net51.cc" + fullUrl;
+  } else if (!fullUrl.startsWith("http")) {
+    fullUrl = "https://net51.cc/" + fullUrl;
+  }
 
-// ❌ Do NOTHING else to the URL
+  // safe cleanup ONLY for non-signed URLs
+  fullUrl = fullUrl.replace(/(https?:)\/+/g, "$1//");
+}
           
           sources.push({
             url: fullUrl,
