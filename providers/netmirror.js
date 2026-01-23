@@ -340,17 +340,25 @@ function getStreamingLinks(contentId, title, platform) {
           
           console.log(`[NetMirror] Original URL: ${fullUrl}`);
           
-          // Parse URL to get base path and query parameters
           try {
+            // Parse the URL manually to avoid URL encoding of ::
             const urlParts = fullUrl.split('?');
             const basePath = urlParts[0];
             const queryString = urlParts[1] || '';
             
-            // Parse existing query parameters
-            const params = new URLSearchParams(queryString);
+            // Parse query parameters manually to preserve order
+            const params = {};
+            if (queryString) {
+              queryString.split('&').forEach(pair => {
+                const [key, value] = pair.split('=');
+                if (key && value !== undefined) {
+                  params[key] = decodeURIComponent(value);
+                }
+              });
+            }
             
             // Get the 'in' parameter
-            let inParam = params.get('in');
+            let inParam = params['in'];
             if (inParam) {
               // Parse the in parameter parts
               const inParts = inParam.split('::');
@@ -378,26 +386,30 @@ function getStreamingLinks(contentId, title, platform) {
             
             // Create each quality variant
             qualities.forEach(({ name, q }) => {
-              // Create new URLSearchParams for this variant
-              const variantParams = new URLSearchParams();
+              // Build query parameters manually to ensure correct order and no URL encoding of ::
+              const queryParts = [];
               
               // Add q parameter FIRST (like Cloudstream)
               if (q) {
-                variantParams.append('q', q);
+                queryParts.push(`q=${encodeURIComponent(q)}`);
               }
               
-              // Add in parameter SECOND (like Cloudstream)
-              variantParams.append('in', inParam);
+              // Add in parameter SECOND (like Cloudstream) - DO NOT encode the ::
+              // We need to encode the individual parts but not the ::
+              const inParts = inParam.split('::');
+              const encodedInParts = inParts.map(part => encodeURIComponent(part));
+              const encodedInParam = encodedInParts.join('::'); // Keep :: unencoded
+              queryParts.push(`in=${encodedInParam}`);
               
-              // Add any other parameters from original URL (except q and in)
-              for (const [key, value] of params.entries()) {
+              // Add any other parameters from original URL (except q, quality, and in)
+              for (const [key, value] of Object.entries(params)) {
                 if (key !== 'q' && key !== 'quality' && key !== 'in') {
-                  variantParams.append(key, value);
+                  queryParts.push(`${key}=${encodeURIComponent(value)}`);
                 }
               }
               
               // Build the complete URL
-              const variantUrl = `${basePath}?${variantParams.toString()}`;
+              const variantUrl = `${basePath}?${queryParts.join('&')}`;
               
               console.log(`[NetMirror] ${name} URL: ${variantUrl.substring(0, 100)}...`);
               
@@ -451,10 +463,8 @@ function getStreamingLinks(contentId, title, platform) {
     return { sources: [], subtitles: [] };
   });
 }
-
-
-
-
+            
+              
 
 
 
