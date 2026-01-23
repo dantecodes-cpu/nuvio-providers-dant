@@ -1,384 +1,274 @@
-// Netflix Mirror Provider
-console.log("[NetMirror] Initializing Netflix provider");
-
+// Netflix Mirror Provider for Nuvio
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const NETMIRROR_BASE = "https://net51.cc/";
-const BASE_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.5",
-  "Connection": "keep-alive"
-};
+const PLATFORM = "netflix";
+const OTT = "nf";
 
 let globalCookie = "";
 let cookieTimestamp = 0;
-const COOKIE_EXPIRY = 54e6;
-const PLATFORM = "netflix";
-const OTT = "nf"; // Netflix OTT code
+const COOKIE_EXPIRY = 54000000; // 15 hours
 
-// Utility functions
-var __defProp = Object.defineProperty;
-var __defProps = Object.defineProperties;
-var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __spreadValues = (a, b) => {
-  for (var prop in b || (b = {}))
-    if (__hasOwnProp.call(b, prop))
-      __defNormalProp(a, prop, b[prop]);
-  if (__getOwnPropSymbols)
-    for (var prop of __getOwnPropSymbols(b)) {
-      if (__propIsEnum.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    }
-  return a;
-};
-var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
-
-function makeRequest(url, options = {}) {
-  return fetch(url, __spreadProps(__spreadValues({}, options), {
-    headers: __spreadValues(__spreadValues({}, BASE_HEADERS), options.headers),
-    timeout: 1e4
-  })).then(function(response) {
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response;
-  });
-}
-
-function getUnixTime() {
-  return Math.floor(Date.now() / 1e3);
-}
-
-// Netflix-specific bypass
-function bypass() {
+async function bypass() {
   const now = Date.now();
   if (globalCookie && cookieTimestamp && now - cookieTimestamp < COOKIE_EXPIRY) {
-    console.log("[NetMirror-Netflix] Using cached authentication cookie");
     return Promise.resolve(globalCookie);
   }
+  
   console.log("[NetMirror-Netflix] Bypassing authentication...");
   
-  function attemptBypass(attempts) {
-    if (attempts >= 5) {
-      throw new Error("Max bypass attempts reached");
-    }
-    return makeRequest(`${NETMIRROR_BASE}tv/p.php`, {
-      method: "POST",
-      headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-        "Referer": `${NETMIRROR_BASE}tv/home`
-      })
-    }).then(function(response) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const response = await fetch(`${NETMIRROR_BASE}tv/p.php`, {
+        method: "POST",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": `${NETMIRROR_BASE}tv/home`
+        }
+      });
+      
       const setCookieHeader = response.headers.get("set-cookie");
       let extractedCookie = null;
-      if (setCookieHeader && (typeof setCookieHeader === "string" || Array.isArray(setCookieHeader))) {
+      
+      if (setCookieHeader) {
         const cookieString = Array.isArray(setCookieHeader) ? setCookieHeader.join("; ") : setCookieHeader;
         const cookieMatch = cookieString.match(/t_hash_t=([^;]+)/);
         if (cookieMatch) {
           extractedCookie = cookieMatch[1];
         }
       }
-      return response.text().then(function(responseText) {
-        if (!responseText.includes('"r":"n"')) {
-          console.log(`[NetMirror-Netflix] Bypass attempt ${attempts + 1} failed, retrying...`);
-          return attemptBypass(attempts + 1);
-        }
-        if (extractedCookie) {
-          globalCookie = extractedCookie;
-          cookieTimestamp = Date.now();
-          console.log("[NetMirror-Netflix] Authentication successful");
-          return globalCookie;
-        }
-        throw new Error("Failed to extract authentication cookie");
-      });
-    });
+      
+      const responseText = await response.text();
+      if (responseText.includes('"r":"n"') && extractedCookie) {
+        globalCookie = extractedCookie;
+        cookieTimestamp = Date.now();
+        console.log("[NetMirror-Netflix] Authentication successful");
+        return globalCookie;
+      }
+    } catch (error) {
+      console.log(`[NetMirror-Netflix] Bypass attempt ${attempt + 1} failed`);
+    }
   }
-  return attemptBypass(0);
+  
+  throw new Error("Max bypass attempts reached");
 }
 
-// Netflix-specific search
-function searchContent(query) {
-  console.log(`[NetMirror-Netflix] Searching for "${query}"...`);
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "233123f803cf02184bf6c67e149cdd50", // Netflix-specific token
-      "ott": OTT,
-      "hd": "on"
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    
-    return makeRequest(
-      `${NETMIRROR_BASE}search.php?s=${encodeURIComponent(query)}&t=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
+async function searchContent(query) {
+  const cookie = await bypass();
+  const cookies = {
+    "t_hash_t": cookie,
+    "user_token": "233123f803cf02184bf6c67e149cdd50",
+    "ott": OTT,
+    "hd": "on"
+  };
+  const cookieString = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+  const timestamp = Math.floor(Date.now() / 1000);
+  
+  const response = await fetch(`${NETMIRROR_BASE}search.php?s=${encodeURIComponent(query)}&t=${timestamp}`, {
+    headers: {
+      "Cookie": cookieString,
+      "Referer": `${NETMIRROR_BASE}tv/home`,
+      "X-Requested-With": "XMLHttpRequest"
+    }
+  });
+  
+  const data = await response.json();
+  return data.searchResult || [];
+}
+
+async function loadContent(contentId) {
+  const cookie = await bypass();
+  const cookies = {
+    "t_hash_t": cookie,
+    "user_token": "233123f803cf02184bf6c67e149cdd50",
+    "ott": OTT,
+    "hd": "on"
+  };
+  const cookieString = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+  const timestamp = Math.floor(Date.now() / 1000);
+  
+  const response = await fetch(`${NETMIRROR_BASE}post.php?id=${contentId}&t=${timestamp}`, {
+    headers: {
+      "Cookie": cookieString,
+      "Referer": `${NETMIRROR_BASE}tv/home`,
+      "X-Requested-With": "XMLHttpRequest"
+    }
+  });
+  
+  return await response.json();
+}
+
+async function getStreamingLinks(contentId, title) {
+  const cookie = await bypass();
+  const cookies = {
+    "t_hash_t": cookie,
+    "user_token": "233123f803cf02184bf6c67e149cdd50",
+    "hd": "on",
+    "ott": OTT
+  };
+  const cookieString = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
+  const timestamp = Math.floor(Date.now() / 1000);
+  
+  const response = await fetch(
+    `${NETMIRROR_BASE}tv/playlist.php?id=${contentId}&t=${encodeURIComponent(title)}&tm=${timestamp}`,
+    {
+      headers: {
+        "Cookie": cookieString,
+        "Referer": `${NETMIRROR_BASE}tv/home`,
+        "X-Requested-With": "XMLHttpRequest"
       }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(searchData) {
-    if (searchData.searchResult && searchData.searchResult.length > 0) {
-      console.log(`[NetMirror-Netflix] Found ${searchData.searchResult.length} results`);
-      return searchData.searchResult.map((item) => ({
-        id: item.id,
-        title: item.t,
-        platform: PLATFORM,
-        posterUrl: `https://imgcdn.media/poster/v/${item.id}.jpg`
-      }));
-    } else {
+    }
+  );
+  
+  const playlist = await response.json();
+  
+  if (!Array.isArray(playlist) || playlist.length === 0) {
+    return { sources: [], subtitles: [] };
+  }
+  
+  const sources = [];
+  
+  playlist.forEach((item) => {
+    if (item.sources) {
+      item.sources.forEach((source) => {
+        let fullUrl = source.file;
+        
+        // Netflix-specific URL fix
+        if (fullUrl.includes("/tv/")) {
+          fullUrl = fullUrl.replace("/tv/", "/");
+        }
+        
+        if (!fullUrl.startsWith("http")) {
+          if (fullUrl.startsWith("//")) {
+            fullUrl = "https:" + fullUrl;
+          } else {
+            fullUrl = "https://net51.cc" + fullUrl;
+          }
+        }
+        
+        sources.push({
+          url: fullUrl,
+          quality: source.label,
+          type: source.type || "application/x-mpegURL"
+        });
+      });
+    }
+  });
+  
+  return { sources, subtitles: [] };
+}
+
+/**
+ * Main provider function for Nuvio
+ * @param {string} tmdbId - The TMDB ID
+ * @param {string} mediaType - "movie" or "tv"
+ * @param {number} season - Season number (1-based), null for movies
+ * @param {number} episode - Episode number (1-based), null for movies
+ * @returns {Promise<Array>} - List of streams
+ */
+async function getStreams(tmdbId, mediaType, season, episode) {
+  console.log(`[NetMirror-Netflix] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
+  
+  try {
+    // Get title from TMDB
+    const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+    const tmdbResponse = await fetch(tmdbUrl);
+    const tmdbData = await tmdbResponse.json();
+    
+    const title = mediaType === "tv" ? tmdbData.name : tmdbData.title;
+    const year = mediaType === "tv" 
+      ? (tmdbData.first_air_date || "").substring(0, 4) 
+      : (tmdbData.release_date || "").substring(0, 4);
+    
+    if (!title) {
+      console.log("[NetMirror-Netflix] Could not extract title from TMDB");
+      return [];
+    }
+    
+    console.log(`[NetMirror-Netflix] Searching for: "${title}"`);
+    
+    // Search for content
+    const searchResults = await searchContent(title);
+    if (searchResults.length === 0) {
       console.log("[NetMirror-Netflix] No results found");
       return [];
     }
-  });
-}
-
-// Netflix-specific load content
-function loadContent(contentId) {
-  console.log(`[NetMirror-Netflix] Loading content details for ID: ${contentId}`);
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "233123f803cf02184bf6c67e149cdd50",
-      "ott": OTT,
-      "hd": "on"
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
-    return makeRequest(
-      `${NETMIRROR_BASE}post.php?id=${contentId}&t=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
-      }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(postData) {
-    console.log(`[NetMirror-Netflix] Loaded: ${postData.title}`);
+    const firstResult = searchResults[0];
+    console.log(`[NetMirror-Netflix] Found: ${firstResult.t} (ID: ${firstResult.id})`);
     
-    return {
-      id: contentId,
-      title: postData.title,
-      description: postData.desc,
-      year: postData.year,
-      episodes: postData.episodes || [],
-      seasons: postData.season || [],
-      isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null,
-      platform: PLATFORM
-    };
-  });
-}
-
-// Netflix-specific streaming links
-function getStreamingLinks(contentId, title) {
-  console.log(`[NetMirror-Netflix] Getting streaming links for: ${title}`);
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "233123f803cf02184bf6c67e149cdd50",
-      "hd": "on",
-      "ott": OTT
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
+    // Load content details
+    const contentData = await loadContent(firstResult.id);
     
-    return makeRequest(
-      `${NETMIRROR_BASE}tv/playlist.php?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
-      }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(playlist) {
-    if (!Array.isArray(playlist) || playlist.length === 0) {
-      console.log("[NetMirror-Netflix] No streaming links found");
-      return { sources: [], subtitles: [] };
-    }
+    // Determine episode ID for TV shows
+    let targetContentId = firstResult.id;
     
-    const sources = [];
-    const subtitles = [];
-    
-    playlist.forEach((item) => {
-      if (item.sources) {
-        item.sources.forEach((source) => {
-          let fullUrl = source.file;
-          
-          // Netflix-specific URL fix: remove /tv/ from URLs
-          if (fullUrl.includes("/tv/")) {
-            fullUrl = fullUrl.replace("/tv/", "/");
-          }
-          
-          // Fix relative URLs
-          if (!fullUrl.startsWith("http")) {
-            if (fullUrl.startsWith("//")) {
-              fullUrl = "https:" + fullUrl;
-            } else {
-              fullUrl = "https://net51.cc" + fullUrl;
-            }
-          }
-          
-          sources.push({
-            url: fullUrl,
-            quality: source.label,
-            type: source.type || "application/x-mpegURL"
-          });
-        });
-      }
-      
-      if (item.tracks) {
-        item.tracks.filter((track) => track.kind === "captions").forEach((track) => {
-          let fullSubUrl = track.file;
-          if (track.file.startsWith("/") && !track.file.startsWith("//")) {
-            fullSubUrl = NETMIRROR_BASE + track.file;
-          } else if (track.file.startsWith("//")) {
-            fullSubUrl = "https:" + track.file;
-          }
-          subtitles.push({
-            url: fullSubUrl,
-            language: track.label
-          });
-        });
-      }
-    });
-    
-    console.log(`[NetMirror-Netflix] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
-    return { sources, subtitles };
-  });
-}
-
-// Netflix-specific stream getter
-function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
-  console.log(`[NetMirror-Netflix] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
-  
-  const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
-  
-  return makeRequest(tmdbUrl).then(function(tmdbResponse) {
-    return tmdbResponse.json();
-  }).then(function(tmdbData) {
-    const title = mediaType === "tv" ? tmdbData.name : tmdbData.title;
-    const year = mediaType === "tv" ? (tmdbData.first_air_date || "").substring(0, 4) : (tmdbData.release_date || "").substring(0, 4);
-    
-    if (!title) {
-      throw new Error("Could not extract title from TMDB response");
-    }
-    
-    console.log(`[NetMirror-Netflix] TMDB Info: "${title}" (${year})`);
-    
-    return searchContent(title).then(function(searchResults) {
-      if (searchResults.length === 0) {
-        console.log("[NetMirror-Netflix] No content found");
-        return [];
-      }
-      
-      // Filter for this platform only
-      const platformResults = searchResults.filter(result => result.platform === PLATFORM);
-      if (platformResults.length === 0) {
-        console.log("[NetMirror-Netflix] No Netflix content found");
-        return [];
-      }
-      
-      const selectedContent = platformResults[0];
-      console.log(`[NetMirror-Netflix] Selected: ${selectedContent.title} (ID: ${selectedContent.id})`);
-      
-      return loadContent(selectedContent.id).then(function(contentData) {
-        if (mediaType === "tv" && contentData.isMovie) {
-          console.log("[NetMirror-Netflix] Content is a movie, but we're looking for TV series");
-          return [];
+    if (mediaType === "tv" && season && episode && contentData.episodes) {
+      const validEpisodes = contentData.episodes.filter(ep => ep !== null);
+      const episodeData = validEpisodes.find(ep => {
+        if (ep.s && ep.ep) {
+          const epSeason = parseInt(ep.s.replace("S", ""));
+          const epNumber = parseInt(ep.ep.replace("E", ""));
+          return epSeason === season && epNumber === episode;
         }
-        
-        let targetContentId = selectedContent.id;
-        
-        if (mediaType === "tv" && !contentData.isMovie && seasonNum && episodeNum) {
-          const validEpisodes = contentData.episodes.filter((ep) => ep !== null);
-          const episodeData = validEpisodes.find((ep) => {
-            let epSeason, epNumber;
-            if (ep.s && ep.ep) {
-              epSeason = parseInt(ep.s.replace("S", ""));
-              epNumber = parseInt(ep.ep.replace("E", ""));
-            }
-            return epSeason === seasonNum && epNumber === episodeNum;
-          });
-          
-          if (episodeData) {
-            targetContentId = episodeData.id;
-          }
-        }
-        
-        return getStreamingLinks(targetContentId, title).then(function(streamData) {
-          if (!streamData.sources || streamData.sources.length === 0) {
-            console.log("[NetMirror-Netflix] No streaming links found");
-            return [];
-          }
-          
-          const streams = streamData.sources.map((source) => {
-            let quality = "HD";
-            const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
-            if (urlQualityMatch) {
-              quality = urlQualityMatch[1];
-            } else if (source.quality) {
-              const labelQualityMatch = source.quality.match(/(\d+p)/i);
-              if (labelQualityMatch) {
-                quality = labelQualityMatch[1];
-              }
-            }
-            
-            let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
-            if (mediaType === "tv" && seasonNum && episodeNum) {
-              streamTitle += ` S${seasonNum}E${episodeNum}`;
-            }
-            
-            return {
-              name: `NetMirror (Netflix)`,
-              title: streamTitle,
-              url: source.url,
-              quality,
-              type: source.type.includes("mpegURL") ? "hls" : "direct",
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 13)",
-                "Accept": "*/*",
-                "Referer": "https://net51.cc/"
-              }
-            };
-          });
-          
-          console.log(`[NetMirror-Netflix] Successfully processed ${streams.length} streams`);
-          return streams;
-        });
+        return false;
       });
+      
+      if (episodeData) {
+        targetContentId = episodeData.id;
+      }
+    }
+    
+    // Get streaming links
+    const streamData = await getStreamingLinks(targetContentId, title);
+    
+    if (!streamData.sources || streamData.sources.length === 0) {
+      console.log("[NetMirror-Netflix] No streaming links found");
+      return [];
+    }
+    
+    // Format streams for Nuvio
+    const streams = streamData.sources.map((source) => {
+      let quality = "HD";
+      const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
+      if (urlQualityMatch) {
+        quality = urlQualityMatch[1];
+      } else if (source.quality) {
+        const labelQualityMatch = source.quality.match(/(\d+p)/i);
+        if (labelQualityMatch) {
+          quality = labelQualityMatch[1];
+        }
+      }
+      
+      let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
+      if (mediaType === "tv" && season && episode) {
+        streamTitle += ` S${season}E${episode}`;
+      }
+      
+      return {
+        name: "NetMirror (Netflix)",
+        title: streamTitle,
+        url: source.url,
+        quality,
+        type: source.type.includes("mpegURL") ? "hls" : "direct",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 13)",
+          "Accept": "*/*",
+          "Referer": "https://net51.cc/"
+        }
+      };
     });
-  }).catch(function(error) {
-    console.error(`[NetMirror-Netflix] Error in getStreams: ${error.message}`);
+    
+    console.log(`[NetMirror-Netflix] Found ${streams.length} streams`);
+    return streams;
+    
+  } catch (error) {
+    console.error(`[NetMirror-Netflix] Error: ${error.message}`);
     return [];
-  });
+  }
 }
 
-// Export Netflix-specific functions
+// Export for Nuvio
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { 
-    getStreams,
-    searchContent,
-    loadContent,
-    getStreamingLinks,
-    platform: PLATFORM
-  };
-} else {
-  window.NetMirrorNetflix = { 
-    getStreams,
-    searchContent,
-    loadContent,
-    getStreamingLinks,
-    platform: PLATFORM
-  };
+  module.exports = { getStreams };
 }
