@@ -265,8 +265,12 @@ function loadContent(contentId, platform) {
     };
   });
 }
+
+
+            
+
 function getStreamingLinks(contentId, title, platform) {
-  console.log(`[NetMirror] Getting streaming links for: ${title}`);
+  console.log(`[NetMirror] Getting streaming links for: ${title} on ${platform}`);
   const ottMap = {
     "netflix": "nf",
     "primevideo": "pv",
@@ -289,6 +293,8 @@ function getStreamingLinks(contentId, title, platform) {
     } else {
       playlistUrl = `${NETMIRROR_BASE}tv/playlist.php`;
     }
+    console.log(`[NetMirror] Calling playlist URL: ${playlistUrl}`);
+    
     return makeRequest(
       `${playlistUrl}?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
       {
@@ -301,6 +307,8 @@ function getStreamingLinks(contentId, title, platform) {
   }).then(function(response) {
     return response.json();
   }).then(function(playlist) {
+    console.log(`[NetMirror] Playlist API response for ${platform}:`, playlist);
+    
     if (!Array.isArray(playlist) || playlist.length === 0) {
       console.log("[NetMirror] No streaming links found");
       return { sources: [], subtitles: [] };
@@ -313,90 +321,149 @@ function getStreamingLinks(contentId, title, platform) {
     
     playlist.forEach((item) => {
       if (item.sources) {
+        console.log(`[NetMirror] Found ${item.sources.length} sources for ${platform}`);
         item.sources.forEach((source) => {
-          let fullUrl = source.file;
-          
-          // 🔧 Netflix path fix: remove `/tv/` ONLY for Netflix
-          if (platform.toLowerCase() === "netflix") {
-            fullUrl = fullUrl
-              .replace("://net51.cc/tv/", "://net51.cc/")
-              .replace(/^\/tv\//, "/");
+          if (!source.file) {
+            console.log(`[NetMirror] Skipping source with no file:`, source);
+            return;
           }
           
-          // ✅ ONLY fix RELATIVE URLs
+          let fullUrl = source.file;
+          console.log(`[NetMirror] Original source URL: ${fullUrl}`);
+          
+          // Fix 1: Ensure URLs are properly formatted
+          if (fullUrl.startsWith("//")) {
+            fullUrl = "https:" + fullUrl;
+            console.log(`[NetMirror] Fixed // URL: ${fullUrl}`);
+          }
+          
+          // Fix 2: Handle relative URLs and platform-specific paths
           if (!fullUrl.startsWith("http")) {
-            if (fullUrl.startsWith("//")) {
-              fullUrl = "https:" + fullUrl;
+            if (fullUrl.startsWith("/")) {
+              // Platform-specific path corrections
+              if (platform.toLowerCase() === "disney") {
+                // Disney URLs should have /mobile/hs/
+                if (!fullUrl.includes("/mobile/hs/")) {
+                  if (fullUrl.includes("/hls/")) {
+                    fullUrl = fullUrl.replace("/hls/", "/mobile/hs/hls/");
+                    console.log(`[NetMirror] Fixed Disney path: ${fullUrl}`);
+                  } else if (fullUrl.includes("/tv/")) {
+                    fullUrl = fullUrl.replace("/tv/", "/mobile/hs/");
+                    console.log(`[NetMirror] Fixed Disney TV path: ${fullUrl}`);
+                  }
+                }
+              } else if (platform.toLowerCase() === "primevideo") {
+                // PrimeVideo URLs should have /tv/pv/ or /pv/
+                if (!fullUrl.includes("/tv/pv/") && !fullUrl.includes("/pv/")) {
+                  if (fullUrl.includes("/hls/")) {
+                    fullUrl = fullUrl.replace("/hls/", "/tv/pv/hls/");
+                    console.log(`[NetMirror] Fixed PrimeVideo path: ${fullUrl}`);
+                  } else if (fullUrl.includes("/mobile/")) {
+                    fullUrl = fullUrl.replace("/mobile/", "/tv/pv/");
+                    console.log(`[NetMirror] Fixed PrimeVideo mobile path: ${fullUrl}`);
+                  }
+                }
+              } else if (platform.toLowerCase() === "netflix") {
+                // Netflix path fix: remove `/tv/` if present
+                if (fullUrl.includes("/tv/")) {
+                  fullUrl = fullUrl.replace("/tv/", "/");
+                  console.log(`[NetMirror] Fixed Netflix path: ${fullUrl}`);
+                }
+              }
+              
+              // Add base URL
+              fullUrl = NETMIRROR_BASE + fullUrl.substring(1);
+              console.log(`[NetMirror] Added base URL: ${fullUrl}`);
             } else {
-              fullUrl = "https://net51.cc" + fullUrl;
+              // URL doesn't start with /, add base URL directly
+              fullUrl = NETMIRROR_BASE + fullUrl;
+              console.log(`[NetMirror] Added base URL to relative path: ${fullUrl}`);
             }
           }
+          
+          console.log(`[NetMirror] Final processed URL for ${platform}: ${fullUrl}`);
           
           // Create quality variants like Cloudstream does
           const qualities = ["1080p", "720p", "480p", "360p", "Auto"];
           
           qualities.forEach(quality => {
-            let variantUrl = fullUrl;
-            
-            // For Auto quality, keep original URL (no q parameter)
-            if (quality !== "Auto") {
-              // Parse URL to add or replace q parameter
-              const urlParts = variantUrl.split('?');
-              const basePath = urlParts[0];
-              const queryString = urlParts[1] || '';
+            try {
+              let variantUrl = fullUrl;
               
-              // Parse query parameters
-              const params = new URLSearchParams(queryString);
-              
-              // Remove existing q/quality parameters
-              params.delete('q');
-              params.delete('quality');
-              
-              // Add the new q parameter FIRST
-              const newParams = new URLSearchParams();
-              newParams.append('q', quality);
-              
-              // Copy all other parameters
-              for (const [key, value] of params.entries()) {
-                newParams.append(key, value);
+              // For Auto quality, keep original URL (no q parameter)
+              if (quality !== "Auto") {
+                // Parse URL to add or replace q parameter
+                const urlParts = variantUrl.split('?');
+                const basePath = urlParts[0];
+                const queryString = urlParts[1] || '';
+                
+                // Parse query parameters
+                const params = new URLSearchParams(queryString);
+                
+                // Remove existing q/quality parameters
+                params.delete('q');
+                params.delete('quality');
+                
+                // Add the new q parameter FIRST
+                const newParams = new URLSearchParams();
+                newParams.append('q', quality);
+                
+                // Copy all other parameters
+                for (const [key, value] of params.entries()) {
+                  newParams.append(key, value);
+                }
+                
+                // Rebuild URL with q parameter first
+                variantUrl = `${basePath}?${newParams.toString()}`;
               }
               
-              // Rebuild URL with q parameter first
-              variantUrl = `${basePath}?${newParams.toString()}`;
-            }
-            
-            // Ensure URL has proper in= parameter format
-            if (variantUrl.includes('in=')) {
-              // Fix the in= parameter to use Cloudstream's token
-              const inMatch = variantUrl.match(/in=([^&]+)/);
-              if (inMatch) {
-                const inParts = inMatch[1].split('::');
-                if (inParts.length >= 4) {
-                  // Replace first part with Cloudstream's token
-                  inParts[0] = cloudstreamToken;
-                  // Update timestamp
-                  inParts[2] = getUnixTime().toString();
-                  const newInParam = inParts.join('::');
-                  variantUrl = variantUrl.replace(/in=[^&]+/, `in=${newInParam}`);
+              // Ensure URL has proper in= parameter format
+              if (variantUrl.includes('in=')) {
+                // Fix the in= parameter to use Cloudstream's token
+                const inMatch = variantUrl.match(/in=([^&]+)/);
+                if (inMatch) {
+                  const inParts = inMatch[1].split('::');
+                  if (inParts.length >= 4) {
+                    // Replace first part with Cloudstream's token
+                    inParts[0] = cloudstreamToken;
+                    // Update timestamp
+                    inParts[2] = getUnixTime().toString();
+                    const newInParam = inParts.join('::');
+                    variantUrl = variantUrl.replace(/in=[^&]+/, `in=${newInParam}`);
+                  }
                 }
               }
+              
+              console.log(`[NetMirror] ${platform} ${quality} URL: ${variantUrl.substring(0, 150)}...`);
+              
+              sources.push({
+                url: variantUrl,
+                quality: quality,
+                type: source.type || "application/x-mpegURL"
+              });
+              
+            } catch (error) {
+              console.error(`[NetMirror] Error creating ${quality} variant:`, error);
+              // Add original URL as fallback
+              sources.push({
+                url: fullUrl,
+                quality: "Auto",
+                type: source.type || "application/x-mpegURL"
+              });
             }
-            
-            sources.push({
-              url: variantUrl,
-              quality: quality,
-              type: source.type || "application/x-mpegURL"
-            });
           });
         });
+      } else {
+        console.log(`[NetMirror] No sources found in playlist item for ${platform}`);
       }
+      
       if (item.tracks) {
         item.tracks.filter((track) => track.kind === "captions").forEach((track) => {
           let fullSubUrl = track.file;
-          if (track.file.startsWith("/") && !track.file.startsWith("//")) {
-            fullSubUrl = NETMIRROR_BASE + track.file;
-          } else if (track.file.startsWith("//")) {
-            fullSubUrl = "https:" + track.file;
+          if (fullSubUrl.startsWith("//")) {
+            fullSubUrl = "https:" + fullSubUrl;
+          } else if (fullSubUrl.startsWith("/") && !fullSubUrl.startsWith("//")) {
+            fullSubUrl = NETMIRROR_BASE + fullSubUrl;
           }
           subtitles.push({
             url: fullSubUrl,
@@ -406,22 +473,22 @@ function getStreamingLinks(contentId, title, platform) {
       }
     });
     
-    console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
+    console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks for ${platform}`);
     
-    // Debug: Show first few URLs
-    if (sources.length > 0) {
-      console.log(`[NetMirror] Sample URLs for ${platform}:`);
-      const qualitySamples = {};
-      sources.forEach(source => {
-        if (!qualitySamples[source.quality]) {
-          qualitySamples[source.quality] = source.url.substring(0, 120) + '...';
-        }
-      });
-      
-      Object.entries(qualitySamples).forEach(([quality, url]) => {
-        console.log(`  ${quality}: ${url}`);
-      });
+    if (sources.length === 0) {
+      console.log(`[NetMirror] DEBUG - Full playlist response for ${platform}:`, JSON.stringify(playlist, null, 2));
     }
+    
+    return { sources, subtitles };
+  }).catch(function(error) {
+    console.error(`[NetMirror] Error in getStreamingLinks for ${platform}:`, error);
+    return { sources: [], subtitles: [] };
+  });
+}
+
+
+
+    
     
     return { sources, subtitles };
   });
