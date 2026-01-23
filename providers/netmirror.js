@@ -576,32 +576,98 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
               
               const streams = streamData.sources.map((source) => {
                 let quality = "HD";
-                const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
-                if (urlQualityMatch) {
-                  quality = urlQualityMatch[1];
-                } else if (source.quality) {
-                  const labelQualityMatch = source.quality.match(/(\d+p)/i);
-                  if (labelQualityMatch) {
-                    quality = labelQualityMatch[1];
-                  } else {
-                    const normalizedQuality = source.quality.toLowerCase();
-                    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
-                      quality = "1080p";
-                    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
-                      quality = "720p";
-                    } else if (normalizedQuality.includes("480")) {
-                      quality = "480p";
-                    } else {
-                      quality = source.quality;
+                const url = source.url;
+                
+                // 🔧 IMPROVED QUALITY DETECTION - Like Cloudstream
+                
+                // 1. First check the quality label from the source
+                if (source.quality) {
+                  const label = source.quality.toLowerCase();
+                  
+                  // Check for exact quality patterns
+                  if (label.includes("1080") || label.includes("full hd") || label.includes("fhd")) {
+                    quality = "1080p";
+                  } else if (label.includes("720") || label.includes("hd")) {
+                    quality = "720p";
+                  } else if (label.includes("480") || label.includes("sd")) {
+                    quality = "480p";
+                  } else if (label.includes("360")) {
+                    quality = "360p";
+                  } else if (label.includes("240")) {
+                    quality = "240p";
+                  } else if (label.match(/\d{3,4}p/)) {
+                    // Extract exact quality like 1080p, 720p, etc
+                    const match = label.match(/(\d{3,4}p)/);
+                    if (match) {
+                      quality = match[1];
                     }
                   }
-                } else if (source.url.includes("720p")) {
-                  quality = "720p";
-                } else if (source.url.includes("480p")) {
-                  quality = "480p";
-                } else if (source.url.includes("1080p")) {
-                  quality = "1080p";
                 }
+                
+                // 2. Check URL patterns for quality
+                if (quality === "HD") {
+                  const urlLower = url.toLowerCase();
+                  
+                  // Check for quality in URL path
+                  if (urlLower.includes("/1080/") || urlLower.includes("_1080.") || 
+                      urlLower.includes("-1080.") || urlLower.includes("1080p.") ||
+                      urlLower.includes("1080p/") || urlLower.includes("=1080") ||
+                      urlLower.includes("1080.mp4") || urlLower.includes("1080.m3u8")) {
+                    quality = "1080p";
+                  } else if (urlLower.includes("/720/") || urlLower.includes("_720.") ||
+                            urlLower.includes("-720.") || urlLower.includes("720p.") ||
+                            urlLower.includes("720p/") || urlLower.includes("=720") ||
+                            urlLower.includes("720.mp4") || urlLower.includes("720.m3u8")) {
+                    quality = "720p";
+                  } else if (urlLower.includes("/480/") || urlLower.includes("_480.") ||
+                            urlLower.includes("-480.") || urlLower.includes("480p.") ||
+                            urlLower.includes("480p/") || urlLower.includes("=480") ||
+                            urlLower.includes("480.mp4") || urlLower.includes("480.m3u8")) {
+                    quality = "480p";
+                  } else if (urlLower.includes("/360/") || urlLower.includes("_360.") ||
+                            urlLower.includes("-360.") || urlLower.includes("360p.") ||
+                            urlLower.includes("360p/") || urlLower.includes("=360") ||
+                            urlLower.includes("360.mp4") || urlLower.includes("360.m3u8")) {
+                    quality = "360p";
+                  }
+                }
+                
+                // 3. Check URL query parameters
+                if (quality === "HD") {
+                  const qMatch = url.match(/[?&]q=(\d+p)/i);
+                  if (qMatch) {
+                    quality = qMatch[1];
+                  } else {
+                    const qualityMatch = url.match(/[?&]quality=(\d+p)/i);
+                    if (qualityMatch) {
+                      quality = qualityMatch[1];
+                    }
+                  }
+                }
+                
+                // 4. Check for resolution in URL
+                if (quality === "HD") {
+                  const resolutionMatch = url.match(/\/(\d{3,4})x(\d{3,4})\//);
+                  if (resolutionMatch) {
+                    const height = parseInt(resolutionMatch[2]);
+                    if (height >= 1080) quality = "1080p";
+                    else if (height >= 720) quality = "720p";
+                    else if (height >= 480) quality = "480p";
+                    else if (height >= 360) quality = "360p";
+                  }
+                }
+                
+                // 5. Check filename for quality indicators
+                if (quality === "HD") {
+                  const filename = url.split('/').pop().toLowerCase();
+                  if (filename.includes("1080")) quality = "1080p";
+                  else if (filename.includes("720")) quality = "720p";
+                  else if (filename.includes("480")) quality = "480p";
+                  else if (filename.includes("360")) quality = "360p";
+                  else if (filename.includes("hd")) quality = "720p";
+                }
+                
+                console.log(`[NetMirror] Detected quality: ${quality} for URL: ${url.substring(0, 100)}...`);
                 
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
@@ -628,6 +694,9 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                   headers: streamHeaders
                 };
               });
+              
+              // Log all detected qualities for debugging
+              console.log(`[NetMirror] All detected qualities:`, streams.map(s => s.quality));
               
               streams.sort((a, b) => {
                 if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
