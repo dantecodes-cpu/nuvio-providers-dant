@@ -1,5 +1,5 @@
-// PrimeVideo Mirror Provider
-console.log("[NetMirror] Initializing PrimeVideo provider");
+// Disney+ Mirror Provider
+console.log("[NetMirror] Initializing Disney+ provider");
 
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const NETMIRROR_BASE = "https://net51.cc/";
@@ -14,8 +14,8 @@ const BASE_HEADERS = {
 let globalCookie = "";
 let cookieTimestamp = 0;
 const COOKIE_EXPIRY = 54e6;
-const PLATFORM = "primevideo";
-const OTT = "pv"; // PrimeVideo OTT code
+const PLATFORM = "disney";
+const OTT = "hs"; // Disney+ OTT code (hs for Hotstar/Disney+)
 
 // Utility functions (same as Netflix)
 var __defProp = Object.defineProperty;
@@ -54,14 +54,14 @@ function getUnixTime() {
   return Math.floor(Date.now() / 1e3);
 }
 
-// PrimeVideo-specific bypass
+// Disney-specific bypass
 function bypass() {
   const now = Date.now();
   if (globalCookie && cookieTimestamp && now - cookieTimestamp < COOKIE_EXPIRY) {
-    console.log("[NetMirror-PrimeVideo] Using cached authentication cookie");
+    console.log("[NetMirror-Disney] Using cached authentication cookie");
     return Promise.resolve(globalCookie);
   }
-  console.log("[NetMirror-PrimeVideo] Bypassing authentication...");
+  console.log("[NetMirror-Disney] Bypassing authentication...");
   
   function attemptBypass(attempts) {
     if (attempts >= 5) {
@@ -84,13 +84,13 @@ function bypass() {
       }
       return response.text().then(function(responseText) {
         if (!responseText.includes('"r":"n"')) {
-          console.log(`[NetMirror-PrimeVideo] Bypass attempt ${attempts + 1} failed, retrying...`);
+          console.log(`[NetMirror-Disney] Bypass attempt ${attempts + 1} failed, retrying...`);
           return attemptBypass(attempts + 1);
         }
         if (extractedCookie) {
           globalCookie = extractedCookie;
           cookieTimestamp = Date.now();
-          console.log("[NetMirror-PrimeVideo] Authentication successful");
+          console.log("[NetMirror-Disney] Authentication successful");
           return globalCookie;
         }
         throw new Error("Failed to extract authentication cookie");
@@ -100,20 +100,20 @@ function bypass() {
   return attemptBypass(0);
 }
 
-// PrimeVideo-specific search
+// Disney-specific search
 function searchContent(query) {
-  console.log(`[NetMirror-PrimeVideo] Searching for "${query}"...`);
+  console.log(`[NetMirror-Disney] Searching for "${query}"...`);
   return bypass().then(function(cookie) {
     const cookies = {
       "t_hash_t": cookie,
-      "user_token": "a0a5f663894ade410614071fe46baca6", // PrimeVideo token
+      "user_token": "a0a5f663894ade410614071fe46baca6", // Disney token
       "ott": OTT,
       "hd": "on"
     };
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
     return makeRequest(
-      `${NETMIRROR_BASE}pv/search.php?s=${encodeURIComponent(query)}&t=${getUnixTime()}`,
+      `${NETMIRROR_BASE}mobile/hs/search.php?s=${encodeURIComponent(query)}&t=${getUnixTime()}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
@@ -125,23 +125,23 @@ function searchContent(query) {
     return response.json();
   }).then(function(searchData) {
     if (searchData.searchResult && searchData.searchResult.length > 0) {
-      console.log(`[NetMirror-PrimeVideo] Found ${searchData.searchResult.length} results`);
+      console.log(`[NetMirror-Disney] Found ${searchData.searchResult.length} results`);
       return searchData.searchResult.map((item) => ({
         id: item.id,
         title: item.t,
         platform: PLATFORM,
-        posterUrl: `https://imgcdn.media/pv/v/${item.id}.jpg`
+        posterUrl: `https://imgcdn.media/hs/v/${item.id}.jpg`
       }));
     } else {
-      console.log("[NetMirror-PrimeVideo] No results found");
+      console.log("[NetMirror-Disney] No results found");
       return [];
     }
   });
 }
 
-// PrimeVideo-specific load content
+// Disney-specific load content
 function loadContent(contentId) {
-  console.log(`[NetMirror-PrimeVideo] Loading content details for ID: ${contentId}`);
+  console.log(`[NetMirror-Disney] Loading content details for ID: ${contentId}`);
   return bypass().then(function(cookie) {
     const cookies = {
       "t_hash_t": cookie,
@@ -152,7 +152,7 @@ function loadContent(contentId) {
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
     return makeRequest(
-      `${NETMIRROR_BASE}pv/post.php?id=${contentId}&t=${getUnixTime()}`,
+      `${NETMIRROR_BASE}mobile/hs/post.php?id=${contentId}&t=${getUnixTime()}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
@@ -163,7 +163,7 @@ function loadContent(contentId) {
   }).then(function(response) {
     return response.json();
   }).then(function(postData) {
-    console.log(`[NetMirror-PrimeVideo] Loaded: ${postData.title}`);
+    console.log(`[NetMirror-Disney] Loaded: ${postData.title}`);
     
     return {
       id: contentId,
@@ -178,9 +178,9 @@ function loadContent(contentId) {
   });
 }
 
-// PrimeVideo-specific streaming links
+// Disney-specific streaming links
 function getStreamingLinks(contentId, title) {
-  console.log(`[NetMirror-PrimeVideo] Getting streaming links for: ${title}`);
+  console.log(`[NetMirror-Disney] Getting streaming links for: ${title}`);
   return bypass().then(function(cookie) {
     const cookies = {
       "t_hash_t": cookie,
@@ -191,7 +191,7 @@ function getStreamingLinks(contentId, title) {
     const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
     
     return makeRequest(
-      `${NETMIRROR_BASE}tv/pv/playlist.php?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
+      `${NETMIRROR_BASE}mobile/hs/playlist.php?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
       {
         headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
           "Cookie": cookieString,
@@ -203,7 +203,7 @@ function getStreamingLinks(contentId, title) {
     return response.json();
   }).then(function(playlist) {
     if (!Array.isArray(playlist) || playlist.length === 0) {
-      console.log("[NetMirror-PrimeVideo] No streaming links found");
+      console.log("[NetMirror-Disney] No streaming links found");
       return { sources: [], subtitles: [] };
     }
     
@@ -215,13 +215,12 @@ function getStreamingLinks(contentId, title) {
         item.sources.forEach((source) => {
           let fullUrl = source.file;
           
-          // PrimeVideo URLs should NOT be modified (Cloudstream behavior)
-          // Only fix relative URLs
+          // Fix relative URLs
           if (!fullUrl.startsWith("http")) {
             if (fullUrl.startsWith("//")) {
               fullUrl = "https:" + fullUrl;
-            } else if (fullUrl.startsWith("/")) {
-              fullUrl = NETMIRROR_BASE + fullUrl.substring(1);
+            } else {
+              fullUrl = "https://net51.cc" + fullUrl;
             }
           }
           
@@ -249,14 +248,14 @@ function getStreamingLinks(contentId, title) {
       }
     });
     
-    console.log(`[NetMirror-PrimeVideo] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
+    console.log(`[NetMirror-Disney] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
     return { sources, subtitles };
   });
 }
 
-// PrimeVideo-specific stream getter
+// Disney-specific stream getter
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
-  console.log(`[NetMirror-PrimeVideo] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
+  console.log(`[NetMirror-Disney] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
   
   const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
   
@@ -270,27 +269,27 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       throw new Error("Could not extract title from TMDB response");
     }
     
-    console.log(`[NetMirror-PrimeVideo] TMDB Info: "${title}" (${year})`);
+    console.log(`[NetMirror-Disney] TMDB Info: "${title}" (${year})`);
     
     return searchContent(title).then(function(searchResults) {
       if (searchResults.length === 0) {
-        console.log("[NetMirror-PrimeVideo] No content found");
+        console.log("[NetMirror-Disney] No content found");
         return [];
       }
       
       // Filter for this platform only
       const platformResults = searchResults.filter(result => result.platform === PLATFORM);
       if (platformResults.length === 0) {
-        console.log("[NetMirror-PrimeVideo] No PrimeVideo content found");
+        console.log("[NetMirror-Disney] No Disney+ content found");
         return [];
       }
       
       const selectedContent = platformResults[0];
-      console.log(`[NetMirror-PrimeVideo] Selected: ${selectedContent.title} (ID: ${selectedContent.id})`);
+      console.log(`[NetMirror-Disney] Selected: ${selectedContent.title} (ID: ${selectedContent.id})`);
       
       return loadContent(selectedContent.id).then(function(contentData) {
         if (mediaType === "tv" && contentData.isMovie) {
-          console.log("[NetMirror-PrimeVideo] Content is a movie, but we're looking for TV series");
+          console.log("[NetMirror-Disney] Content is a movie, but we're looking for TV series");
           return [];
         }
         
@@ -314,7 +313,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         
         return getStreamingLinks(targetContentId, title).then(function(streamData) {
           if (!streamData.sources || streamData.sources.length === 0) {
-            console.log("[NetMirror-PrimeVideo] No streaming links found");
+            console.log("[NetMirror-Disney] No streaming links found");
             return [];
           }
           
@@ -336,7 +335,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
             }
             
             return {
-              name: `NetMirror (PrimeVideo)`,
+              name: `NetMirror (Disney+)`,
               title: streamTitle,
               url: source.url,
               quality,
@@ -349,18 +348,18 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
             };
           });
           
-          console.log(`[NetMirror-PrimeVideo] Successfully processed ${streams.length} streams`);
+          console.log(`[NetMirror-Disney] Successfully processed ${streams.length} streams`);
           return streams;
         });
       });
     });
   }).catch(function(error) {
-    console.error(`[NetMirror-PrimeVideo] Error in getStreams: ${error.message}`);
+    console.error(`[NetMirror-Disney] Error in getStreams: ${error.message}`);
     return [];
   });
 }
 
-// Export PrimeVideo-specific functions
+// Export Disney-specific functions
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { 
     getStreams,
@@ -370,7 +369,7 @@ if (typeof module !== "undefined" && module.exports) {
     platform: PLATFORM
   };
 } else {
-  window.NetMirrorPrimeVideo = { 
+  window.NetMirrorDisney = { 
     getStreams,
     searchContent,
     loadContent,
