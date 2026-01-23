@@ -312,14 +312,14 @@ function getStreamingLinks(contentId, title, platform) {
         item.sources.forEach((source) => {
           let fullUrl = source.file;
           
-          // 🔧 Netflix path fix: remove `/tv/` ONLY for Netflix
+          // ðŸ”§ Netflix path fix: remove `/tv/` ONLY for Netflix
           if (platform.toLowerCase() === "netflix") {
             fullUrl = fullUrl
               .replace("://net51.cc/tv/", "://net51.cc/")
               .replace(/^\/tv\//, "/");
           }
           
-          // ✅ ONLY fix RELATIVE URLs
+          // âœ… ONLY fix RELATIVE URLs
           if (!fullUrl.startsWith("http")) {
             if (fullUrl.startsWith("//")) {
               fullUrl = "https:" + fullUrl;
@@ -327,7 +327,7 @@ function getStreamingLinks(contentId, title, platform) {
               fullUrl = "https://net51.cc" + fullUrl;
             }
           }
-          // ❌ Do NOTHING else to the URL
+          // âŒ Do NOTHING else to the URL
           
           sources.push({
             url: fullUrl,
@@ -612,7 +612,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                   }
                 }
                 
-                // ✅ Correct headers - ALWAYS include Referer (Cloudstream behavior)
+                // âœ… Correct headers - ALWAYS include Referer (Cloudstream behavior)
                 const streamHeaders = {
                   "User-Agent": "Mozilla/5.0 (Linux; Android 13)",
                   "Accept": "*/*",
