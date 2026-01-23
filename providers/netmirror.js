@@ -267,6 +267,7 @@ function loadContent(contentId, platform) {
 }
 
 
+
 function getStreamingLinks(contentId, title, platform) {
   console.log(`[NetMirror] Getting streaming links for: ${title}`);
   const ottMap = {
@@ -312,6 +313,9 @@ function getStreamingLinks(contentId, title, platform) {
     const sources = [];
     const subtitles = [];
     
+    // Cloudstream's static user token
+    const cloudstreamToken = "a0a5f663894ade410614071fe46baca6";
+    
     playlist.forEach((item) => {
       if (item.sources && Array.isArray(item.sources)) {
         item.sources.forEach((source) => {
@@ -336,89 +340,86 @@ function getStreamingLinks(contentId, title, platform) {
           
           console.log(`[NetMirror] Original URL: ${fullUrl}`);
           
-          // Create Auto quality (original URL without q parameter)
-          let autoUrl = fullUrl;
-          // Remove any existing q parameter from Auto version
-          autoUrl = autoUrl.replace(/[?&]q=[^&]*/, '');
-          autoUrl = autoUrl.replace(/[?&]quality=[^&]*/, '');
-          
-          // Clean up double ? or & symbols
-          autoUrl = autoUrl.replace(/\?&/, '?');
-          autoUrl = autoUrl.replace(/\?\?/, '?');
-          if (autoUrl.endsWith('?') || autoUrl.endsWith('&')) {
-            autoUrl = autoUrl.slice(0, -1);
+          // Parse URL to get base path and query parameters
+          try {
+            const urlParts = fullUrl.split('?');
+            const basePath = urlParts[0];
+            const queryString = urlParts[1] || '';
+            
+            // Parse existing query parameters
+            const params = new URLSearchParams(queryString);
+            
+            // Get the 'in' parameter
+            let inParam = params.get('in');
+            if (inParam) {
+              // Parse the in parameter parts
+              const inParts = inParam.split('::');
+              if (inParts.length >= 4) {
+                // Replace first part with Cloudstream token and update timestamp
+                inParts[0] = cloudstreamToken;
+                inParts[2] = getUnixTime().toString();
+                inParam = inParts.join('::');
+              }
+            } else {
+              // Create new in parameter like Cloudstream
+              const randomHash = generateRandomHash(32);
+              const timestamp = getUnixTime();
+              inParam = `${cloudstreamToken}::${randomHash}::${timestamp}::ni`;
+            }
+            
+            // Define quality variants to create
+            const qualities = [
+              { name: "1080p", q: "1080p" },
+              { name: "720p", q: "720p" },
+              { name: "480p", q: "480p" },
+              { name: "360p", q: "360p" },
+              { name: "Auto", q: null } // No q parameter for Auto
+            ];
+            
+            // Create each quality variant
+            qualities.forEach(({ name, q }) => {
+              // Create new URLSearchParams for this variant
+              const variantParams = new URLSearchParams();
+              
+              // Add q parameter FIRST (like Cloudstream)
+              if (q) {
+                variantParams.append('q', q);
+              }
+              
+              // Add in parameter SECOND (like Cloudstream)
+              variantParams.append('in', inParam);
+              
+              // Add any other parameters from original URL (except q and in)
+              for (const [key, value] of params.entries()) {
+                if (key !== 'q' && key !== 'quality' && key !== 'in') {
+                  variantParams.append(key, value);
+                }
+              }
+              
+              // Build the complete URL
+              const variantUrl = `${basePath}?${variantParams.toString()}`;
+              
+              console.log(`[NetMirror] ${name} URL: ${variantUrl.substring(0, 100)}...`);
+              
+              // Add to sources
+              sources.push({
+                url: variantUrl,
+                quality: name,
+                type: source.type || "application/x-mpegURL"
+              });
+            });
+            
+            console.log(`[NetMirror] Added 5 quality variants for this source`);
+            
+          } catch (error) {
+            console.error(`[NetMirror] Error processing URL ${fullUrl}:`, error);
+            // Fallback: add original URL as Auto
+            sources.push({
+              url: fullUrl,
+              quality: "Auto",
+              type: source.type || "application/x-mpegURL"
+            });
           }
-          
-          console.log(`[NetMirror] Auto URL: ${autoUrl}`);
-          
-          // Create 720p version
-          let url720p = autoUrl;
-          if (url720p.includes('?')) {
-            url720p += '&q=720p';
-          } else {
-            url720p += '?q=720p';
-          }
-          console.log(`[NetMirror] 720p URL: ${url720p}`);
-          
-          // Create 1080p version  
-          let url1080p = autoUrl;
-          if (url1080p.includes('?')) {
-            url1080p += '&q=1080p';
-          } else {
-            url1080p += '?q=1080p';
-          }
-          console.log(`[NetMirror] 1080p URL: ${url1080p}`);
-          
-          // Create 480p version
-          let url480p = autoUrl;
-          if (url480p.includes('?')) {
-            url480p += '&q=480p';
-          } else {
-            url480p += '?q=480p';
-          }
-          console.log(`[NetMirror] 480p URL: ${url480p}`);
-          
-          // Create 360p version
-          let url360p = autoUrl;
-          if (url360p.includes('?')) {
-            url360p += '&q=360p';
-          } else {
-            url360p += '?q=360p';
-          }
-          console.log(`[NetMirror] 360p URL: ${url360p}`);
-          
-          // Add all quality variants
-          sources.push({
-            url: url1080p,
-            quality: "1080p",
-            type: source.type || "application/x-mpegURL"
-          });
-          
-          sources.push({
-            url: url720p,
-            quality: "720p",
-            type: source.type || "application/x-mpegURL"
-          });
-          
-          sources.push({
-            url: url480p,
-            quality: "480p",
-            type: source.type || "application/x-mpegURL"
-          });
-          
-          sources.push({
-            url: url360p,
-            quality: "360p",
-            type: source.type || "application/x-mpegURL"
-          });
-          
-          sources.push({
-            url: autoUrl,
-            quality: "Auto",
-            type: source.type || "application/x-mpegURL"
-          });
-          
-          console.log(`[NetMirror] Added 5 quality variants for this source`);
         });
       }
       
@@ -450,6 +451,12 @@ function getStreamingLinks(contentId, title, platform) {
     return { sources: [], subtitles: [] };
   });
 }
+
+
+
+
+
+
 
 function findEpisodeId(episodes, season, episode) {
   if (!episodes || episodes.length === 0) {
