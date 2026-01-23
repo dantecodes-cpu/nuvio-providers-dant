@@ -329,11 +329,41 @@ function getStreamingLinks(contentId, title, platform) {
           }
           // ❌ Do NOTHING else to the URL
           
-          sources.push({
-            url: fullUrl,
-            quality: source.label,
-            type: source.type || "application/x-mpegURL"
-          });
+          // ================================
+// 🎯 Disney (Hotstar) — Cloudstream exact behavior
+// ================================
+if (platform.toLowerCase() === "disney") {
+  const baseUrl = fullUrl;
+
+  // 1️⃣ Auto (no quality param)
+  sources.push({
+    url: baseUrl,
+    quality: "Auto",
+    type: "application/x-mpegURL"
+  });
+
+  // 2️⃣ Explicit qualities (forced)
+  const qualities = ["1080p", "720p", "480p"];
+
+  qualities.forEach((q) => {
+    let qUrl = baseUrl;
+
+    // If q already exists, replace it
+    if (/[?&]q=/.test(qUrl)) {
+      qUrl = qUrl.replace(/([?&]q=)[^&]+/, `$1${q}`);
+    } else {
+      qUrl += (qUrl.includes("?") ? "&" : "?") + `q=${q}`;
+    }
+
+    sources.push({
+      url: qUrl,
+      quality: q,
+      type: "application/x-mpegURL"
+    });
+  });
+
+  return; // ⛔ do NOT fall through to default logic
+}
         });
       }
       if (item.tracks) {
