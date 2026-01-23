@@ -1,402 +1,3 @@
-var __defProp = Object.defineProperty;
-var __defProps = Object.defineProperties;
-var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __spreadValues = (a, b) => {
-  for (var prop in b || (b = {}))
-    if (__hasOwnProp.call(b, prop))
-      __defNormalProp(a, prop, b[prop]);
-  if (__getOwnPropSymbols)
-    for (var prop of __getOwnPropSymbols(b)) {
-      if (__propIsEnum.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    }
-  return a;
-};
-var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
-console.log("[NetMirror] Initializing NetMirror provider");
-const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-const NETMIRROR_BASE = "https://net51.cc/";
-const BASE_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.5",
-  "Connection": "keep-alive"
-};
-let globalCookie = "";
-let cookieTimestamp = 0;
-const COOKIE_EXPIRY = 54e6;
-function makeRequest(url, options = {}) {
-  return fetch(url, __spreadProps(__spreadValues({}, options), {
-    headers: __spreadValues(__spreadValues({}, BASE_HEADERS), options.headers),
-    timeout: 1e4
-  })).then(function(response) {
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response;
-  });
-}
-function getUnixTime() {
-  return Math.floor(Date.now() / 1e3);
-}
-function bypass() {
-  const now = Date.now();
-  if (globalCookie && cookieTimestamp && now - cookieTimestamp < COOKIE_EXPIRY) {
-    console.log("[NetMirror] Using cached authentication cookie");
-    return Promise.resolve(globalCookie);
-  }
-  console.log("[NetMirror] Bypassing authentication...");
-  function attemptBypass(attempts) {
-    if (attempts >= 5) {
-      throw new Error("Max bypass attempts reached");
-    }
-    return makeRequest(`${NETMIRROR_BASE}tv/p.php`, {
-      method: "POST",
-      headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-        "Referer": `${NETMIRROR_BASE}tv/home`
-      })
-    }).then(function(response) {
-      const setCookieHeader = response.headers.get("set-cookie");
-      let extractedCookie = null;
-      if (setCookieHeader && (typeof setCookieHeader === "string" || Array.isArray(setCookieHeader))) {
-        const cookieString = Array.isArray(setCookieHeader) ? setCookieHeader.join("; ") : setCookieHeader;
-        const cookieMatch = cookieString.match(/t_hash_t=([^;]+)/);
-        if (cookieMatch) {
-          extractedCookie = cookieMatch[1];
-        }
-      }
-      return response.text().then(function(responseText) {
-        if (!responseText.includes('"r":"n"')) {
-          console.log(`[NetMirror] Bypass attempt ${attempts + 1} failed, retrying...`);
-          return attemptBypass(attempts + 1);
-        }
-        if (extractedCookie) {
-          globalCookie = extractedCookie;
-          cookieTimestamp = Date.now();
-          console.log("[NetMirror] Authentication successful");
-          return globalCookie;
-        }
-        throw new Error("Failed to extract authentication cookie");
-      });
-    });
-  }
-  return attemptBypass(0);
-}
-function searchContent(query, platform) {
-  console.log(`[NetMirror] Searching for "${query}" on ${platform}...`);
-  const ottMap = {
-    "netflix": "nf",
-    "primevideo": "pv",
-    "disney": "hs"
-  };
-  const ott = ottMap[platform.toLowerCase()] || "nf";
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "a0a5f663894ade410614071fe46baca6",
-      "ott": ott,
-      "hd": "on"
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    const searchEndpoints = {
-      "netflix": `${NETMIRROR_BASE}search.php`,
-      "primevideo": `${NETMIRROR_BASE}pv/search.php`,
-      "disney": `${NETMIRROR_BASE}mobile/hs/search.php`
-    };
-    const searchUrl = searchEndpoints[platform.toLowerCase()] || searchEndpoints["netflix"];
-    return makeRequest(
-      `${searchUrl}?s=${encodeURIComponent(query)}&t=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
-      }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(searchData) {
-    if (searchData.searchResult && searchData.searchResult.length > 0) {
-      console.log(`[NetMirror] Found ${searchData.searchResult.length} results`);
-      return searchData.searchResult.map((item) => ({
-        id: item.id,
-        title: item.t,
-        posterUrl: `https://imgcdn.media/poster/v/${item.id}.jpg`
-      }));
-    } else {
-      console.log("[NetMirror] No results found");
-      return [];
-    }
-  });
-}
-function getEpisodesFromSeason(seriesId, seasonId, platform, page) {
-  const ottMap = {
-    "netflix": "nf",
-    "primevideo": "pv",
-    "disney": "hs"
-  };
-  const ott = ottMap[platform.toLowerCase()] || "nf";
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "a0a5f663894ade410614071fe46baca6",
-      "ott": ott,
-      "hd": "on"
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    const episodes = [];
-    let currentPage = page || 1;
-    const episodesEndpoints = {
-      "netflix": `${NETMIRROR_BASE}episodes.php`,
-      "primevideo": `${NETMIRROR_BASE}pv/episodes.php`,
-      "disney": `${NETMIRROR_BASE}mobile/hs/episodes.php`
-    };
-    const episodesUrl = episodesEndpoints[platform.toLowerCase()] || episodesEndpoints["netflix"];
-    function fetchPage(pageNum) {
-      return makeRequest(
-        `${episodesUrl}?s=${seasonId}&series=${seriesId}&t=${getUnixTime()}&page=${pageNum}`,
-        {
-          headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-            "Cookie": cookieString,
-            "Referer": `${NETMIRROR_BASE}tv/home`
-          })
-        }
-      ).then(function(response) {
-        return response.json();
-      }).then(function(episodeData) {
-        if (episodeData.episodes) {
-          episodes.push(...episodeData.episodes);
-        }
-        if (episodeData.nextPageShow === 0) {
-          return episodes;
-        } else {
-          return fetchPage(pageNum + 1);
-        }
-      }).catch(function(error) {
-        console.log(`[NetMirror] Failed to load episodes from season ${seasonId}, page ${pageNum}`);
-        return episodes;
-      });
-    }
-    return fetchPage(currentPage);
-  });
-}
-function loadContent(contentId, platform) {
-  console.log(`[NetMirror] Loading content details for ID: ${contentId}`);
-  const ottMap = {
-    "netflix": "nf",
-    "primevideo": "pv",
-    "disney": "hs"
-  };
-  const ott = ottMap[platform.toLowerCase()] || "nf";
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "a0a5f663894ade410614071fe46baca6",
-      "ott": ott,
-      "hd": "on"
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    const postEndpoints = {
-      "netflix": `${NETMIRROR_BASE}post.php`,
-      "primevideo": `${NETMIRROR_BASE}pv/post.php`,
-      "disney": `${NETMIRROR_BASE}mobile/hs/post.php`
-    };
-    const postUrl = postEndpoints[platform.toLowerCase()] || postEndpoints["netflix"];
-    return makeRequest(
-      `${postUrl}?id=${contentId}&t=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
-      }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(postData) {
-    console.log(`[NetMirror] Loaded: ${postData.title}`);
-    let allEpisodes = postData.episodes || [];
-    if (postData.episodes && postData.episodes.length > 0 && postData.episodes[0] !== null) {
-      console.log("[NetMirror] Loading episodes from all seasons...");
-      let episodePromise = Promise.resolve();
-      if (postData.nextPageShow === 1 && postData.nextPageSeason) {
-        episodePromise = episodePromise.then(function() {
-          return getEpisodesFromSeason(contentId, postData.nextPageSeason, platform, 2);
-        }).then(function(additionalEpisodes) {
-          allEpisodes.push(...additionalEpisodes);
-        });
-      }
-      if (postData.season && postData.season.length > 1) {
-        const otherSeasons = postData.season.slice(0, -1);
-        otherSeasons.forEach(function(season) {
-          episodePromise = episodePromise.then(function() {
-            return getEpisodesFromSeason(contentId, season.id, platform, 1);
-          }).then(function(seasonEpisodes) {
-            allEpisodes.push(...seasonEpisodes);
-          });
-        });
-      }
-      return episodePromise.then(function() {
-        console.log(`[NetMirror] Loaded ${allEpisodes.filter((ep) => ep !== null).length} total episodes`);
-        return {
-          id: contentId,
-          title: postData.title,
-          description: postData.desc,
-          year: postData.year,
-          episodes: allEpisodes,
-          seasons: postData.season || [],
-          isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
-        };
-      });
-    }
-    return {
-      id: contentId,
-      title: postData.title,
-      description: postData.desc,
-      year: postData.year,
-      episodes: allEpisodes,
-      seasons: postData.season || [],
-      isMovie: !postData.episodes || postData.episodes.length === 0 || postData.episodes[0] === null
-    };
-  });
-}
-function getStreamingLinks(contentId, title, platform) {
-  console.log(`[NetMirror] Getting streaming links for: ${title}`);
-  const ottMap = {
-    "netflix": "nf",
-    "primevideo": "pv",
-    "disney": "hs"
-  };
-  const ott = ottMap[platform.toLowerCase()] || "nf";
-  return bypass().then(function(cookie) {
-    const cookies = {
-      "t_hash_t": cookie,
-      "user_token": "a0a5f663894ade410614071fe46baca6",
-      "hd": "on",
-      "ott": ott
-    };
-    const cookieString = Object.entries(cookies).map(([key, value]) => `${key}=${value}`).join("; ");
-    let playlistUrl;
-    if (platform.toLowerCase() === "primevideo") {
-      playlistUrl = `${NETMIRROR_BASE}tv/pv/playlist.php`;
-    } else if (platform.toLowerCase() === "disney") {
-      playlistUrl = `${NETMIRROR_BASE}mobile/hs/playlist.php`;
-    } else {
-      playlistUrl = `${NETMIRROR_BASE}tv/playlist.php`;
-    }
-    return makeRequest(
-      `${playlistUrl}?id=${contentId}&t=${encodeURIComponent(title)}&tm=${getUnixTime()}`,
-      {
-        headers: __spreadProps(__spreadValues({}, BASE_HEADERS), {
-          "Cookie": cookieString,
-          "Referer": `${NETMIRROR_BASE}tv/home`
-        })
-      }
-    );
-  }).then(function(response) {
-    return response.json();
-  }).then(function(playlist) {
-    if (!Array.isArray(playlist) || playlist.length === 0) {
-      console.log("[NetMirror] No streaming links found");
-      return { sources: [], subtitles: [] };
-    }
-    const sources = [];
-    const subtitles = [];
-    playlist.forEach((item) => {
-      if (item.sources) {
-        item.sources.forEach((source) => {
-          let fullUrl = source.file;
-          
-          // 🔧 Netflix path fix: remove `/tv/` ONLY for Netflix
-          if (platform.toLowerCase() === "netflix") {
-            fullUrl = fullUrl
-              .replace("://net51.cc/tv/", "://net51.cc/")
-              .replace(/^\/tv\//, "/");
-          }
-          
-          // ✅ ONLY fix RELATIVE URLs
-          if (!fullUrl.startsWith("http")) {
-            if (fullUrl.startsWith("//")) {
-              fullUrl = "https:" + fullUrl;
-            } else {
-              fullUrl = "https://net51.cc" + fullUrl;
-            }
-          }
-          // ❌ Do NOTHING else to the URL
-          
-          sources.push({
-            url: fullUrl,
-            quality: source.label,
-            type: source.type || "application/x-mpegURL"
-          });
-        });
-      }
-      if (item.tracks) {
-        item.tracks.filter((track) => track.kind === "captions").forEach((track) => {
-          let fullSubUrl = track.file;
-          if (track.file.startsWith("/") && !track.file.startsWith("//")) {
-            fullSubUrl = NETMIRROR_BASE + track.file;
-          } else if (track.file.startsWith("//")) {
-            fullSubUrl = "https:" + track.file;
-          }
-          subtitles.push({
-            url: fullSubUrl,
-            language: track.label
-          });
-        });
-      }
-    });
-    console.log(`[NetMirror] Found ${sources.length} streaming sources and ${subtitles.length} subtitle tracks`);
-    
-    // Debug log for PrimeVideo URLs
-    if (platform.toLowerCase() === "primevideo" && sources.length > 0) {
-      console.log(`[NetMirror] PrimeVideo sample URL: ${sources[0].url}`);
-    }
-    
-    return { sources, subtitles };
-  });
-}
-function findEpisodeId(episodes, season, episode) {
-  if (!episodes || episodes.length === 0) {
-    console.log("[NetMirror] No episodes found in content data");
-    return null;
-  }
-  const validEpisodes = episodes.filter((ep) => ep !== null);
-  console.log(`[NetMirror] Found ${validEpisodes.length} valid episodes`);
-  if (validEpisodes.length > 0) {
-    console.log(`[NetMirror] Sample episode structure:`, JSON.stringify(validEpisodes[0], null, 2));
-  }
-  const targetEpisode = validEpisodes.find((ep) => {
-    let epSeason, epNumber;
-    if (ep.s && ep.ep) {
-      epSeason = parseInt(ep.s.replace("S", ""));
-      epNumber = parseInt(ep.ep.replace("E", ""));
-    } else if (ep.season && ep.episode) {
-      epSeason = parseInt(ep.season);
-      epNumber = parseInt(ep.episode);
-    } else if (ep.season_number && ep.episode_number) {
-      epSeason = parseInt(ep.season_number);
-      epNumber = parseInt(ep.episode_number);
-    } else {
-      console.log(`[NetMirror] Unknown episode format:`, ep);
-      return false;
-    }
-    console.log(`[NetMirror] Checking episode S${epSeason}E${epNumber} against target S${season}E${episode}`);
-    return epSeason === season && epNumber === episode;
-  });
-  if (targetEpisode) {
-    console.log(`[NetMirror] Found target episode:`, targetEpisode);
-    return targetEpisode.id;
-  } else {
-    console.log(`[NetMirror] Target episode S${season}E${episode} not found`);
-    return null;
-  }
-}
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
   console.log(`[NetMirror] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
   const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
@@ -574,100 +175,149 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 return trySearch(strategyIndex + 1);
               }
               
+              // Debug: Log all source details
+              console.log(`[NetMirror] Raw source data:`, streamData.sources.map(s => ({
+                url: s.url.substring(0, 100) + "...",
+                quality: s.quality,
+                type: s.type
+              })));
+              
               const streams = streamData.sources.map((source) => {
                 let quality = "HD";
                 const url = source.url;
+                const sourceQuality = source.quality || "";
                 
-                // 🔧 IMPROVED QUALITY DETECTION - Like Cloudstream
+                console.log(`[NetMirror] Processing source - URL: ${url.substring(0, 100)}..., Label: "${sourceQuality}"`);
                 
-                // 1. First check the quality label from the source
-                if (source.quality) {
-                  const label = source.quality.toLowerCase();
+                // 🔧 IMPROVED QUALITY DETECTION - Cloudstream approach
+                // Try multiple detection methods in order of priority
+                
+                // Method 1: Direct quality label from source
+                if (sourceQuality) {
+                  const label = sourceQuality.toLowerCase().trim();
+                  console.log(`[NetMirror] Source label: "${label}"`);
                   
-                  // Check for exact quality patterns
-                  if (label.includes("1080") || label.includes("full hd") || label.includes("fhd")) {
-                    quality = "1080p";
-                  } else if (label.includes("720") || label.includes("hd")) {
-                    quality = "720p";
-                  } else if (label.includes("480") || label.includes("sd")) {
-                    quality = "480p";
-                  } else if (label.includes("360")) {
-                    quality = "360p";
-                  } else if (label.includes("240")) {
-                    quality = "240p";
-                  } else if (label.match(/\d{3,4}p/)) {
-                    // Extract exact quality like 1080p, 720p, etc
-                    const match = label.match(/(\d{3,4}p)/);
+                  // Common quality patterns in labels
+                  const qualityPatterns = [
+                    { pattern: /1080|full.?hd|fhd/i, value: "1080p" },
+                    { pattern: /720|hd|high.?def/i, value: "720p" },
+                    { pattern: /480|sd|standard.?def/i, value: "480p" },
+                    { pattern: /360|low/i, value: "360p" },
+                    { pattern: /240|very.?low/i, value: "240p" },
+                    { pattern: /(\d{3,4})[pP]/, value: (match) => match[1] + "p" }
+                  ];
+                  
+                  for (const { pattern, value } of qualityPatterns) {
+                    const match = label.match(pattern);
                     if (match) {
-                      quality = match[1];
+                      quality = typeof value === 'function' ? value(match) : value;
+                      console.log(`[NetMirror] Detected from label: ${quality}`);
+                      break;
                     }
                   }
                 }
                 
-                // 2. Check URL patterns for quality
-                if (quality === "HD") {
+                // Method 2: URL pattern matching (most reliable for NetMirror)
+                if (quality === "HD" || quality === "720p") {
                   const urlLower = url.toLowerCase();
                   
-                  // Check for quality in URL path
-                  if (urlLower.includes("/1080/") || urlLower.includes("_1080.") || 
-                      urlLower.includes("-1080.") || urlLower.includes("1080p.") ||
-                      urlLower.includes("1080p/") || urlLower.includes("=1080") ||
-                      urlLower.includes("1080.mp4") || urlLower.includes("1080.m3u8")) {
-                    quality = "1080p";
-                  } else if (urlLower.includes("/720/") || urlLower.includes("_720.") ||
-                            urlLower.includes("-720.") || urlLower.includes("720p.") ||
-                            urlLower.includes("720p/") || urlLower.includes("=720") ||
-                            urlLower.includes("720.mp4") || urlLower.includes("720.m3u8")) {
-                    quality = "720p";
-                  } else if (urlLower.includes("/480/") || urlLower.includes("_480.") ||
-                            urlLower.includes("-480.") || urlLower.includes("480p.") ||
-                            urlLower.includes("480p/") || urlLower.includes("=480") ||
-                            urlLower.includes("480.mp4") || urlLower.includes("480.m3u8")) {
-                    quality = "480p";
-                  } else if (urlLower.includes("/360/") || urlLower.includes("_360.") ||
-                            urlLower.includes("-360.") || urlLower.includes("360p.") ||
-                            urlLower.includes("360p/") || urlLower.includes("=360") ||
-                            urlLower.includes("360.mp4") || urlLower.includes("360.m3u8")) {
-                    quality = "360p";
-                  }
-                }
-                
-                // 3. Check URL query parameters
-                if (quality === "HD") {
-                  const qMatch = url.match(/[?&]q=(\d+p)/i);
-                  if (qMatch) {
-                    quality = qMatch[1];
-                  } else {
-                    const qualityMatch = url.match(/[?&]quality=(\d+p)/i);
-                    if (qualityMatch) {
-                      quality = qualityMatch[1];
+                  // NetMirror specific patterns
+                  const urlPatterns = [
+                    // 1080p patterns
+                    { pattern: /1080|1920x1080|fullhd|fhd/, value: "1080p" },
+                    // 720p patterns  
+                    { pattern: /720|1280x720|hd/, value: "720p" },
+                    // 480p patterns
+                    { pattern: /480|854x480|sd/, value: "480p" },
+                    // 360p patterns
+                    { pattern: /360|640x360/, value: "360p" },
+                    // 240p patterns
+                    { pattern: /240|426x240/, value: "240p" }
+                  ];
+                  
+                  for (const { pattern, value } of urlPatterns) {
+                    if (pattern.test(urlLower)) {
+                      // Additional check to avoid false positives
+                      if (value === "1080p" && !urlLower.includes("720") && !urlLower.includes("480") && !urlLower.includes("360")) {
+                        quality = value;
+                        console.log(`[NetMirror] Detected from URL pattern: ${quality}`);
+                        break;
+                      } else if (value !== "1080p") {
+                        quality = value;
+                        console.log(`[NetMirror] Detected from URL pattern: ${quality}`);
+                        break;
+                      }
                     }
                   }
                 }
                 
-                // 4. Check for resolution in URL
-                if (quality === "HD") {
-                  const resolutionMatch = url.match(/\/(\d{3,4})x(\d{3,4})\//);
-                  if (resolutionMatch) {
-                    const height = parseInt(resolutionMatch[2]);
-                    if (height >= 1080) quality = "1080p";
-                    else if (height >= 720) quality = "720p";
-                    else if (height >= 480) quality = "480p";
-                    else if (height >= 360) quality = "360p";
+                // Method 3: Query parameter detection
+                if (quality === "HD" || quality === "720p") {
+                  const urlParams = new URLSearchParams(url.split('?')[1] || '');
+                  const qParam = urlParams.get('q') || urlParams.get('quality') || urlParams.get('res');
+                  if (qParam) {
+                    const qMatch = qParam.match(/(\d{3,4})[pP]?/);
+                    if (qMatch) {
+                      const num = qMatch[1];
+                      if (num === '1080') quality = "1080p";
+                      else if (num === '720') quality = "720p";
+                      else if (num === '480') quality = "480p";
+                      else if (num === '360') quality = "360p";
+                      else if (num === '240') quality = "240p";
+                      console.log(`[NetMirror] Detected from query param: ${quality}`);
+                    }
                   }
                 }
                 
-                // 5. Check filename for quality indicators
-                if (quality === "HD") {
-                  const filename = url.split('/').pop().toLowerCase();
-                  if (filename.includes("1080")) quality = "1080p";
-                  else if (filename.includes("720")) quality = "720p";
-                  else if (filename.includes("480")) quality = "480p";
-                  else if (filename.includes("360")) quality = "360p";
-                  else if (filename.includes("hd")) quality = "720p";
+                // Method 4: File name analysis
+                if (quality === "HD" || quality === "720p") {
+                  const fileName = url.split('/').pop().split('?')[0].toLowerCase();
+                  const qualityInName = fileName.match(/(\d{3,4})[pP]/);
+                  if (qualityInName) {
+                    const num = qualityInName[1];
+                    if (num === '1080') quality = "1080p";
+                    else if (num === '720') quality = "720p";
+                    else if (num === '480') quality = "480p";
+                    else if (num === '360') quality = "360p";
+                    console.log(`[NetMirror] Detected from filename: ${quality}`);
+                  }
                 }
                 
-                console.log(`[NetMirror] Detected quality: ${quality} for URL: ${url.substring(0, 100)}...`);
+                // Method 5: Check for specific NetMirror patterns
+                if (quality === "HD" || quality === "720p") {
+                  // NetMirror often uses patterns like: /hls/1080/ or /hls/720/
+                  if (url.includes('/hls/1080/') || url.includes('/1080/hls/')) {
+                    quality = "1080p";
+                    console.log(`[NetMirror] Detected from hls path: ${quality}`);
+                  } else if (url.includes('/hls/720/') || url.includes('/720/hls/')) {
+                    quality = "720p";
+                    console.log(`[NetMirror] Detected from hls path: ${quality}`);
+                  }
+                }
+                
+                // Method 6: Default based on platform
+                if (quality === "HD") {
+                  // If we still have HD, check if URL looks like it might be 1080p
+                  const urlLower = url.toLowerCase();
+                  const hasHighQualityIndicators = urlLower.includes('high') || 
+                                                   urlLower.includes('best') || 
+                                                   urlLower.includes('quality') ||
+                                                   url.includes('1080');
+                  
+                  const hasLowQualityIndicators = urlLower.includes('low') || 
+                                                  urlLower.includes('mobile') ||
+                                                  urlLower.includes('360');
+                  
+                  if (hasHighQualityIndicators && !hasLowQualityIndicators) {
+                    quality = "1080p";
+                    console.log(`[NetMirror] Defaulted to 1080p based on URL indicators`);
+                  } else {
+                    quality = "720p";
+                    console.log(`[NetMirror] Defaulted to 720p`);
+                  }
+                }
+                
+                console.log(`[NetMirror] Final quality: ${quality} for URL`);
                 
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
@@ -695,8 +345,12 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 };
               });
               
-              // Log all detected qualities for debugging
-              console.log(`[NetMirror] All detected qualities:`, streams.map(s => s.quality));
+              // Log summary of detected qualities
+              const qualityCounts = {};
+              streams.forEach(s => {
+                qualityCounts[s.quality] = (qualityCounts[s.quality] || 0) + 1;
+              });
+              console.log(`[NetMirror] Quality summary:`, qualityCounts);
               
               streams.sort((a, b) => {
                 if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
@@ -739,10 +393,4 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
     console.error(`[NetMirror] Error in getStreams: ${error.message}`);
     return [];
   });
-}
-
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = { getStreams };
-} else {
-  global.getStreams = getStreams;
 }
