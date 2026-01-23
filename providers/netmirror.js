@@ -315,6 +315,20 @@ function getStreamingLinks(contentId, title, platform) {
           // 🔧 Netflix path fix: remove `/tv/` ONLY for Netflix
 let fullUrl = source.file;
 
+          const isTv = mediaType === "tv";
+const isMovie = mediaType === "movie";
+
+const path = source.file;
+
+// ⛔ Reject wrong media early
+if (isTv && !path.includes("/tv/")) {
+  return; // skip movie result
+}
+
+if (isMovie && path.includes("/tv/")) {
+  return; // skip TV result
+}
+
 // 🔧 Netflix path fix: remove `/tv/` ONLY for Netflix
 if (platform.toLowerCase() === "netflix") {
   fullUrl = fullUrl
