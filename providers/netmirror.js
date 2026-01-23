@@ -320,14 +320,26 @@ function getStreamingLinks(contentId, title, platform) {
           }
           
           // ✅ ONLY fix RELATIVE URLs
-          if (!fullUrl.startsWith("http")) {
-            if (fullUrl.startsWith("//")) {
-              fullUrl = "https:" + fullUrl;
-            } else {
-              fullUrl = "https://net51.cc" + fullUrl;
-            }
-          }
-          // ❌ Do NOTHING else to the URL
+if (!fullUrl.startsWith("http")) {
+
+  // 🔵 Disney — keep net51.cc//
+  if (platform.toLowerCase() === "disney") {
+    if (fullUrl.startsWith("//")) {
+      fullUrl = "https://net51.cc" + fullUrl; // preserves //
+    } else if (fullUrl.startsWith("/")) {
+      fullUrl = "https://net51.cc/" + fullUrl; // results in //
+    }
+  }
+
+  // 🟢 Netflix / Prime — normal behavior
+  else {
+    if (fullUrl.startsWith("//")) {
+      fullUrl = "https:" + fullUrl;
+    } else {
+      fullUrl = "https://net51.cc" + fullUrl;
+    }
+  }
+}
           
           // ================================
 // 🎯 Disney (Hotstar) — Cloudstream exact behavior
