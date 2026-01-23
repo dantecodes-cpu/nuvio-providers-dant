@@ -397,6 +397,25 @@ function findEpisodeId(episodes, season, episode) {
     return null;
   }
 }
+
+// Helper function to detect quality from URL based on q parameter
+function detectQualityFromUrl(url, label) {
+  // Extract q parameter from URL
+  const urlObj = new URL(url, 'https://net51.cc');
+  const qParam = urlObj.searchParams.get('q');
+  
+  if (qParam) {
+    const qLower = qParam.toLowerCase();
+    if (qLower.includes('1080')) return '1080p';
+    if (qLower.includes('720')) return '720p';
+    if (qLower.includes('480')) return '480p';
+    return qParam; // Return as-is if it doesn't match known patterns
+  }
+  
+  // No q parameter means AUTO quality
+  return 'Auto';
+}
+
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
   console.log(`[NetMirror] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${seasonNum ? `, S${seasonNum}E${episodeNum}` : ""}`);
   const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
@@ -575,33 +594,8 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
               }
               
               const streams = streamData.sources.map((source) => {
-                let quality = "HD";
-                const urlQualityMatch = source.url.match(/[?&]q=(\d+p)/i);
-                if (urlQualityMatch) {
-                  quality = urlQualityMatch[1];
-                } else if (source.quality) {
-                  const labelQualityMatch = source.quality.match(/(\d+p)/i);
-                  if (labelQualityMatch) {
-                    quality = labelQualityMatch[1];
-                  } else {
-                    const normalizedQuality = source.quality.toLowerCase();
-                    if (normalizedQuality.includes("full hd") || normalizedQuality.includes("1080")) {
-                      quality = "1080p";
-                    } else if (normalizedQuality.includes("hd") || normalizedQuality.includes("720")) {
-                      quality = "720p";
-                    } else if (normalizedQuality.includes("480")) {
-                      quality = "480p";
-                    } else {
-                      quality = source.quality;
-                    }
-                  }
-                } else if (source.url.includes("720p")) {
-                  quality = "720p";
-                } else if (source.url.includes("480p")) {
-                  quality = "480p";
-                } else if (source.url.includes("1080p")) {
-                  quality = "1080p";
-                }
+                // Detect quality based on URL's q parameter
+                const quality = detectQualityFromUrl(source.url, source.quality);
                 
                 let streamTitle = `${title} ${year ? `(${year})` : ""} ${quality}`;
                 if (mediaType === "tv") {
@@ -629,23 +623,27 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 };
               });
               
+              // Sort streams by quality (Auto first, then highest resolution to lowest)
               streams.sort((a, b) => {
-                if (a.quality.toLowerCase() === "auto" && b.quality.toLowerCase() !== "auto") {
-                  return -1;
-                }
-                if (b.quality.toLowerCase() === "auto" && a.quality.toLowerCase() !== "auto") {
-                  return 1;
-                }
-                const parseQuality = (quality) => {
+                // Auto quality should come first
+                if (a.quality === 'Auto' && b.quality !== 'Auto') return -1;
+                if (b.quality === 'Auto' && a.quality !== 'Auto') return 1;
+                
+                // If both are Auto or both are not Auto, sort by resolution
+                const parseResolution = (quality) => {
                   const match = quality.match(/(\d{3,4})p/i);
                   return match ? parseInt(match[1], 10) : 0;
                 };
-                const qualityA = parseQuality(a.quality);
-                const qualityB = parseQuality(b.quality);
-                return qualityB - qualityA;
+                
+                const resA = parseResolution(a.quality);
+                const resB = parseResolution(b.quality);
+                
+                // Higher resolution first
+                return resB - resA;
               });
               
               console.log(`[NetMirror] Successfully processed ${streams.length} streams from ${platform}`);
+              console.log(`[NetMirror] Available qualities: ${streams.map(s => s.quality).join(', ')}`);
               return streams;
             });
           });
