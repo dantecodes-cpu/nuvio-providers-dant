@@ -410,40 +410,44 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       throw new Error("Could not extract title from TMDB response");
     }
     console.log(`[NetMirror] TMDB Info: "${title}" (${year})`);
+    
+    // Try different search strategies based on media type
+    let searchStrategies = [];
+    
+    if (mediaType === "tv") {
+      // For TV shows, try multiple strategies to find the right one
+      searchStrategies = [
+        { query: title, desc: "Title only" },
+        { query: `${title} ${year}`, desc: "Title with year" },
+        { query: `${title} season 1`, desc: "Title with season" },
+        { query: `${title} s01`, desc: "Title with season number" }
+      ];
+    } else {
+      // For movies, simpler approach
+      searchStrategies = [
+        { query: title, desc: "Title only" },
+        { query: `${title} ${year}`, desc: "Title with year" }
+      ];
+    }
+    
     let platforms = ["netflix", "primevideo", "disney"];
     if (title.toLowerCase().includes("boys") || title.toLowerCase().includes("prime")) {
       platforms = ["primevideo", "netflix", "disney"];
     }
-    console.log(`[NetMirror] Will try search queries: "${title}" and "${title} ${year}"`);
     
-    // Improved similarity calculation
-    function calculateSimilarity(str1, str2, mediaType) {
+    console.log(`[NetMirror] Will try ${searchStrategies.length} search strategies`);
+    
+    // Improved similarity calculation - simpler but effective
+    function calculateSimilarity(str1, str2) {
       const s1 = str1.toLowerCase().trim();
       const s2 = str2.toLowerCase().trim();
       
       // Exact match is best
       if (s1 === s2) return 1;
       
-      // Check for TV series indicators
-      const tvIndicators = ["season", "s01", "s1", "series", "tv series", "episode"];
-      const isTVQuery = mediaType === "tv" || tvIndicators.some(indicator => s1.includes(indicator));
-      const isTVResult = tvIndicators.some(indicator => s2.includes(indicator));
-      
-      // Penalize mismatched types (TV vs Movie)
-      if (isTVQuery !== isTVResult) {
-        return 0.1; // Very low score for mismatched types
-      }
-      
-      // Check for year match
-      const yearMatch1 = s1.match(/\b(19|20)\d{2}\b/);
-      const yearMatch2 = s2.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch1 && yearMatch2 && yearMatch1[0] !== yearMatch2[0]) {
-        return 0.2; // Different years = low score
-      }
-      
       // Word-based matching
-      const words1 = s1.split(/[\s\-.,:;]+/).filter((w) => w.length > 0);
-      const words2 = s2.split(/[\s\-.,:;]+/).filter((w) => w.length > 0);
+      const words1 = s1.split(/[\s\-.,:;()]+/).filter((w) => w.length > 0);
+      const words2 = s2.split(/[\s\-.,:;()]+/).filter((w) => w.length > 0);
       
       let exactMatches = 0;
       for (const queryWord of words2) {
@@ -453,34 +457,18 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       }
       
       // Calculate match percentage
-      const matchPercentage = exactMatches / words1.length;
-      
-      // Boost score for TV series with season indicators
-      if (isTVQuery && (s2.includes("season") || s2.match(/s\d+/i))) {
-        return matchPercentage * 1.2;
-      }
-      
-      return matchPercentage;
+      return exactMatches / Math.max(words1.length, words2.length);
     }
     
-    function filterRelevantResults(searchResults, query, mediaType) {
+    function filterRelevantResults(searchResults, query) {
       const filtered = searchResults.filter((result) => {
-        const similarity = calculateSimilarity(result.title, query, mediaType);
-        return similarity >= 0.5; // Lower threshold but with better calculation
+        const similarity = calculateSimilarity(result.title, query);
+        return similarity >= 0.4; // Lower threshold to catch more results
       });
       
       return filtered.sort((a, b) => {
-        const simA = calculateSimilarity(a.title, query, mediaType);
-        const simB = calculateSimilarity(b.title, query, mediaType);
-        
-        // If scores are equal, prefer TV series for TV queries
-        if (Math.abs(simA - simB) < 0.1 && mediaType === "tv") {
-          const isTV_A = a.title.toLowerCase().includes("season") || a.title.toLowerCase().match(/s\d+/i);
-          const isTV_B = b.title.toLowerCase().includes("season") || b.title.toLowerCase().match(/s\d+/i);
-          if (isTV_A && !isTV_B) return -1;
-          if (!isTV_A && isTV_B) return 1;
-        }
-        
+        const simA = calculateSimilarity(a.title, query);
+        const simB = calculateSimilarity(b.title, query);
         return simB - simA;
       });
     }
@@ -493,64 +481,62 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       const platform = platforms[platformIndex];
       console.log(`[NetMirror] Trying platform: ${platform}`);
       
-      function trySearch(withYear) {
-        let searchQuery;
-        if (mediaType === "tv") {
-          // For TV shows, add "season" indicator to avoid movies
-          searchQuery = withYear ? `${title} season ${year}` : `${title} season`;
-        } else {
-          searchQuery = withYear ? `${title} ${year}` : title;
+      function trySearch(strategyIndex) {
+        if (strategyIndex >= searchStrategies.length) {
+          console.log(`[NetMirror] All search strategies exhausted for ${platform}`);
+          return null;
         }
         
-        console.log(`[NetMirror] Searching for: "${searchQuery}"`);
-        return searchContent(searchQuery, platform).then(function(searchResults) {
+        const strategy = searchStrategies[strategyIndex];
+        console.log(`[NetMirror] Strategy ${strategyIndex + 1}/${searchStrategies.length}: "${strategy.query}" (${strategy.desc})`);
+        
+        return searchContent(strategy.query, platform).then(function(searchResults) {
           if (searchResults.length === 0) {
-            if (!withYear && year) {
-              console.log(`[NetMirror] No results for "${title}", trying with year...`);
-              return trySearch(true);
-            }
-            return null;
+            console.log(`[NetMirror] No results, trying next strategy...`);
+            return trySearch(strategyIndex + 1);
           }
           
-          // Filter out obvious wrong results
-          const filteredResults = searchResults.filter(result => {
-            const lowerTitle = result.title.toLowerCase();
-            // Skip results that are clearly movies when searching for TV
-            if (mediaType === "tv") {
-              const movieIndicators = ["movie", "film", "(202", "(201", "(200"];
-              if (movieIndicators.some(indicator => lowerTitle.includes(indicator))) {
-                return false;
-              }
-            }
-            return true;
-          });
-          
-          if (filteredResults.length === 0) {
-            if (!withYear && year) {
-              console.log(`[NetMirror] Trying with year...`);
-              return trySearch(true);
-            }
-            return null;
-          }
-          
-          const relevantResults = filterRelevantResults(filteredResults, title, mediaType);
+          const relevantResults = filterRelevantResults(searchResults, title);
           if (relevantResults.length === 0) {
-            console.log(`[NetMirror] Found ${searchResults.length} results but none were relevant enough`);
-            if (!withYear && year) {
-              console.log(`[NetMirror] Trying with year...`);
-              return trySearch(true);
-            }
-            return null;
+            console.log(`[NetMirror] Found ${searchResults.length} results but none were relevant enough, trying next strategy...`);
+            return trySearch(strategyIndex + 1);
           }
           
-          const selectedContent = relevantResults[0];
-          console.log(`[NetMirror] Selected: ${selectedContent.title} (ID: ${selectedContent.id}) - filtered from ${searchResults.length} results`);
+          // For TV shows, try to filter out movies
+          let filteredResults = relevantResults;
+          if (mediaType === "tv") {
+            filteredResults = relevantResults.filter(result => {
+              const lowerTitle = result.title.toLowerCase();
+              // Skip results that look like movies
+              const movieIndicators = ["(202", "(201", "(200", "(199", "(198"];
+              if (movieIndicators.some(indicator => lowerTitle.includes(indicator))) {
+                // Check if it's actually a TV series by looking for season indicators
+                const seasonIndicators = ["season", "s01", "s1", "s02", "s2", "series"];
+                if (!seasonIndicators.some(indicator => lowerTitle.includes(indicator))) {
+                  console.log(`[NetMirror] Skipping movie result: ${result.title}`);
+                  return false;
+                }
+              }
+              return true;
+            });
+            
+            if (filteredResults.length === 0) {
+              console.log(`[NetMirror] All results filtered out as movies, trying next strategy...`);
+              return trySearch(strategyIndex + 1);
+            }
+          }
+          
+          const selectedContent = filteredResults[0];
+          console.log(`[NetMirror] Selected: ${selectedContent.title} (ID: ${selectedContent.id}) - from ${filteredResults.length} filtered results`);
           
           return loadContent(selectedContent.id, platform).then(function(contentData) {
-            // Verify content type matches
-            if (mediaType === "tv" && contentData.isMovie) {
-              console.log(`[NetMirror] Selected content is a movie, but we're looking for TV series. Skipping...`);
-              return null;
+            // Verify content type matches (but be less strict)
+            if (mediaType === "tv") {
+              // Check if it has episodes/seasons
+              if (contentData.isMovie && contentData.seasons.length === 0) {
+                console.log(`[NetMirror] Selected content appears to be a movie, trying next strategy...`);
+                return trySearch(strategyIndex + 1);
+              }
             }
             
             let targetContentId = selectedContent.id;
@@ -577,15 +563,15 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                 targetContentId = episodeData.id;
                 console.log(`[NetMirror] Found episode ID: ${episodeData.id}`);
               } else {
-                console.log(`[NetMirror] Episode S${seasonNum}E${episodeNum} not found`);
-                return null;
+                console.log(`[NetMirror] Episode S${seasonNum}E${episodeNum} not found, trying next strategy...`);
+                return trySearch(strategyIndex + 1);
               }
             }
             
             return getStreamingLinks(targetContentId, title, platform).then(function(streamData) {
               if (!streamData.sources || streamData.sources.length === 0) {
-                console.log(`[NetMirror] No streaming links found`);
-                return null;
+                console.log(`[NetMirror] No streaming links found, trying next strategy...`);
+                return trySearch(strategyIndex + 1);
               }
               
               const streams = streamData.sources.map((source) => {
@@ -666,7 +652,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         });
       }
       
-      return trySearch(false).then(function(result) {
+      return trySearch(0).then(function(result) {
         if (result) {
           return result;
         } else {
