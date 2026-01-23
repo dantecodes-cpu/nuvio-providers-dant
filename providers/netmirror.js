@@ -318,24 +318,18 @@ const cookies = {
             // USE THE URL EXACTLY AS PROVIDED - DO NOT MODIFY
             // Only ensure it's a valid absolute URL
             if (fullUrl.startsWith("//")) {
-              fullUrl = "https:" + fullUrl;
-            } else if (fullUrl.startsWith("/")) {
-              // Add base, but be careful not to add double slash if base already ends with one
-              const base = NETMIRROR_BASE.endsWith('/') ? NETMIRROR_BASE.slice(0, -1) : NETMIRROR_BASE;
-              fullUrl = base + fullUrl;
-            }
-            // If it's already a full http(s) URL, leave it alone.
-          } else {
-            // Original logic for Netflix/Disney (unchanged)
-            fullUrl = fullUrl.replace("/tv/", "/");
-            if (!fullUrl.startsWith("/")) {
-              fullUrl = "/" + fullUrl;
-            }
-            fullUrl = NETMIRROR_BASE + fullUrl;
-          }
-          
-          // Clean up any *accidental* double slashes in the protocol only
-          fullUrl = fullUrl.replace(/(https?:)\/+/g, '$1//');
+              let fullUrl = source.file;
+
+// ✅ ONLY fix RELATIVE URLs
+if (!fullUrl.startsWith("http")) {
+  if (fullUrl.startsWith("//")) {
+    fullUrl = "https:" + fullUrl;
+  } else {
+    fullUrl = "https://net51.cc" + fullUrl;
+  }
+}
+
+// ❌ Do NOTHING else to the URL
           
           sources.push({
             url: fullUrl,
