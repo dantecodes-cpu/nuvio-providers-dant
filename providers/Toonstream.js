@@ -1,5 +1,5 @@
-// ToonStream provider for Nuvio
-// Based on Cloudstream's ToonStream implementation
+// ToonStream Cartoon Provider for Nuvio
+// Direct scraping for Western cartoons - No MAL/AniList dependency
 
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
@@ -47,115 +47,33 @@ function fetchRequest(url, options) {
     });
 }
 
-// Parse HTML using regex (no cheerio in React Native)
+// Simple HTML parser for ToonStream's structure
 function parseHTML(html) {
     return {
-        // Get element by selector
         querySelector: function(selector) {
             if (selector === 'header.entry-header > h1') {
                 var match = html.match(/<header[^>]*entry-header[^>]*>[\s\S]*?<h1[^>]*>([^<]+)<\/h1>/i);
                 return match ? { textContent: match[1].trim() } : null;
             }
-            if (selector === 'div.description > p') {
-                var match = html.match(/<div[^>]*description[^>]*>[\s\S]*?<p[^>]*>([^<]+)<\/p>/i);
-                return match ? { textContent: match[1].trim() } : null;
-            }
-            if (selector === 'div.bghd > img') {
-                var match = html.match(/<div[^>]*bghd[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
-                return match ? { getAttribute: function() { return match[1]; } } : null;
-            }
-            if (selector === '#movies-a > ul > li article') {
-                // Return first article
-                var articleMatch = html.match(/<article[^>]*>[\s\S]*?<\/article>/i);
-                if (articleMatch) {
-                    var articleHtml = articleMatch[0];
-                    return {
-                        querySelector: function(subSelector) {
-                            if (subSelector === 'header > h2') {
-                                var titleMatch = articleHtml.match(/<header[^>]*>[\s\S]*?<h2[^>]*>([^<]+)<\/h2>/i);
-                                return titleMatch ? { textContent: titleMatch[1].trim() } : null;
-                            }
-                            if (subSelector === 'a') {
-                                var linkMatch = articleHtml.match(/<a[^>]*href="([^"]+)"/i);
-                                return linkMatch ? { getAttribute: function() { return linkMatch[1]; } } : null;
-                            }
-                            if (subSelector === 'img') {
-                                var imgMatch = articleHtml.match(/<img[^>]*src="([^"]+)"/i);
-                                return imgMatch ? { getAttribute: function() { return imgMatch[1]; } } : null;
-                            }
-                            return null;
-                        }
-                    };
-                }
-                return null;
-            }
-            if (selector === '#aa-options > div > iframe') {
-                // Return first iframe
-                var iframeMatch = html.match(/<iframe[^>]*data-src="([^"]+)"[^>]*>/i);
-                if (iframeMatch) {
-                    return {
-                        getAttribute: function(attr) {
-                            if (attr === 'data-src') return iframeMatch[1];
-                            return '';
-                        }
-                    };
-                }
-                return null;
-            }
-            if (selector === 'div.aa-drp.choose-season > ul > li > a') {
-                var seasonDivMatch = html.match(/<div[^>]*aa-drp[^>]*choose-season[^>]*>[\s\S]*?<\/div>/i);
-                if (seasonDivMatch) {
-                    var linkMatch = seasonDivMatch[0].match(/<a[^>]*data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>([^<]+)<\/a>/i);
-                    if (linkMatch) {
-                        return {
-                            getAttribute: function(attr) {
-                                if (attr === 'data-post') return linkMatch[1];
-                                if (attr === 'data-season') return linkMatch[2];
-                                return '';
-                            },
-                            textContent: linkMatch[3] || ''
-                        };
-                    }
-                }
-                return null;
-            }
-            if (selector === 'iframe') {
-                var iframeMatch = html.match(/<iframe[^>]*src="([^"]+)"[^>]*>/i);
-                if (iframeMatch) {
-                    return {
-                        getAttribute: function(attr) {
-                            if (attr === 'src') return iframeMatch[1];
-                            return '';
-                        }
-                    };
-                }
-                return null;
-            }
             return null;
         },
-        // Get all elements by selector
         querySelectorAll: function(selector) {
-            var elem = this.querySelector(selector);
             if (selector === '#movies-a > ul > li article') {
-                // Return all articles
                 var articles = [];
-                var articleRegex = /<article[^>]*>[\s\S]*?<\/article>/gi;
+                var articleRegex = /<article[\s\S]*?<\/article>/gi;
                 var articleMatch;
+                
                 while ((articleMatch = articleRegex.exec(html)) !== null) {
                     var articleHtml = articleMatch[0];
                     articles.push({
                         querySelector: function(subSelector) {
                             if (subSelector === 'header > h2') {
-                                var titleMatch = articleHtml.match(/<header[^>]*>[\s\S]*?<h2[^>]*>([^<]+)<\/h2>/i);
+                                var titleMatch = articleHtml.match(/<h2[^>]*>([^<]+)<\/h2>/i);
                                 return titleMatch ? { textContent: titleMatch[1].trim() } : null;
                             }
                             if (subSelector === 'a') {
                                 var linkMatch = articleHtml.match(/<a[^>]*href="([^"]+)"/i);
                                 return linkMatch ? { getAttribute: function() { return linkMatch[1]; } } : null;
-                            }
-                            if (subSelector === 'img') {
-                                var imgMatch = articleHtml.match(/<img[^>]*src="([^"]+)"/i);
-                                return imgMatch ? { getAttribute: function() { return imgMatch[1]; } } : null;
                             }
                             return null;
                         }
@@ -164,10 +82,10 @@ function parseHTML(html) {
                 return articles;
             }
             if (selector === '#aa-options > div > iframe') {
-                // Return all iframes
                 var iframes = [];
                 var iframeRegex = /<iframe[^>]*data-src="([^"]+)"[^>]*>/gi;
                 var iframeMatch;
+                
                 while ((iframeMatch = iframeRegex.exec(html)) !== null) {
                     iframes.push({
                         getAttribute: function(attr) {
@@ -180,29 +98,47 @@ function parseHTML(html) {
             }
             if (selector === 'div.aa-drp.choose-season > ul > li > a') {
                 var links = [];
-                var seasonDivMatch = html.match(/<div[^>]*aa-drp[^>]*choose-season[^>]*>[\s\S]*?<\/div>/i);
-                if (seasonDivMatch) {
-                    var linkRegex = /<a[^>]*data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
-                    var linkMatch;
-                    while ((linkMatch = linkRegex.exec(seasonDivMatch[0])) !== null) {
-                        links.push({
-                            getAttribute: function(attr) {
-                                if (attr === 'data-post') return linkMatch[1];
-                                if (attr === 'data-season') return linkMatch[2];
-                                return '';
-                            },
-                            textContent: linkMatch[3] || ''
-                        });
-                    }
+                var linkRegex = /<a[^>]*data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
+                var linkMatch;
+                
+                while ((linkMatch = linkRegex.exec(html)) !== null) {
+                    links.push({
+                        getAttribute: function(attr) {
+                            if (attr === 'data-post') return linkMatch[1];
+                            if (attr === 'data-season') return linkMatch[2];
+                            return '';
+                        },
+                        textContent: linkMatch[3] || ''
+                    });
                 }
                 return links;
             }
-            return elem ? [elem] : [];
+            if (selector === 'article') {
+                var articles = [];
+                var articleRegex = /<article[\s\S]*?>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<h2[^>]*>([^<]+)<\/h2>/gi;
+                var articleMatch;
+                
+                while ((articleMatch = articleRegex.exec(html)) !== null) {
+                    articles.push({
+                        querySelector: function(subSelector) {
+                            if (subSelector === 'a') {
+                                return { getAttribute: function() { return articleMatch[1]; } };
+                            }
+                            if (subSelector === 'header.entry-header > h2') {
+                                return { textContent: articleMatch[2] || '' };
+                            }
+                            return null;
+                        }
+                    });
+                }
+                return articles;
+            }
+            return [];
         }
     };
 }
 
-// Get TMDB details
+// Get TMDB details for cartoon
 function getTMDBDetails(tmdbId, mediaType) {
     var url = TMDB_BASE_URL + '/' + mediaType + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
     return fetchRequest(url).then(function (html) {
@@ -213,23 +149,32 @@ function getTMDBDetails(tmdbId, mediaType) {
                 originalTitle: data.original_title || data.original_name,
                 year: mediaType === 'movie' 
                     ? (data.release_date ? parseInt(data.release_date.split('-')[0]) : null)
-                    : (data.first_air_date ? parseInt(data.first_air_date.split('-')[0]) : null)
+                    : (data.first_air_date ? parseInt(data.first_air_date.split('-')[0]) : null),
+                // Cartoon-specific metadata
+                genres: data.genres ? data.genres.map(function(g) { return g.name; }) : [],
+                overview: data.overview || ''
             };
         } catch (e) {
-            return { title: null, originalTitle: null, year: null };
+            return { title: null, originalTitle: null, year: null, genres: [], overview: '' };
         }
     }).catch(function () {
-        return { title: null, originalTitle: null, year: null };
+        return { title: null, originalTitle: null, year: null, genres: [], overview: '' };
     });
 }
 
-// Search ToonStream by title
-function searchToonStream(query) {
+// Search ToonStream directly (no MAL/AniList dependency)
+function searchToonStreamDirect(query) {
     var searchUrl = MAIN_URL + '/?s=' + encodeURIComponent(query);
+    console.log('[ToonStream] Searching:', searchUrl);
+    
     return fetchRequest(searchUrl).then(function (html) {
+        console.log('[ToonStream] Search HTML length:', html.length);
+        
         var doc = parseHTML(html);
         var results = [];
         var items = doc.querySelectorAll('#movies-a > ul > li article');
+        
+        console.log('[ToonStream] Found articles:', items.length);
         
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
@@ -245,62 +190,84 @@ function searchToonStream(query) {
                     url = url.startsWith('//') ? 'https:' + url : MAIN_URL + url;
                 }
                 
+                console.log('[ToonStream] Found result:', { title: title, url: url });
+                
+                // Determine type from URL or title
+                var type = url.includes('/series/') ? 'tv' : 'movie';
+                
                 results.push({
                     title: title,
                     url: url,
-                    type: url.includes('/series/') ? 'tv' : 'movie'
+                    type: type
                 });
             }
         }
+        
         return results;
-    }).catch(function () {
+    }).catch(function (error) {
+        console.error('[ToonStream] Search error:', error);
         return [];
     });
 }
 
-// Extract AWSStream/Zephyrflick video URL (from Cloudstream's AWSStream class)
-function extractAWSStreamVideo(embedUrl, referer) {
+// Extract AWSStream video (from Cloudstream's AWSStream extractor)
+function extractAWSStreamVideo(embedUrl) {
     return new Promise(function (resolve) {
         try {
+            console.log('[ToonStream] Extracting AWSStream:', embedUrl);
+            
             // Extract hash from URL
             var extractedHash = embedUrl.substring(embedUrl.lastIndexOf('/') + 1);
-            var mainUrl = embedUrl.includes('zephyrflick.top') ? 'https://play.zephyrflick.top' : 'https://z.awstream.net';
+            var isZephyrflick = embedUrl.includes('zephyrflick.top');
+            var mainUrl = isZephyrflick ? 'https://play.zephyrflick.top' : 'https://z.awstream.net';
             
-            // Build AJAX request URL
+            // Build AJAX request URL (exactly like Cloudstream)
             var m3u8Url = mainUrl + '/player/index.php?data=' + extractedHash + '&do=getVideo';
+            
+            console.log('[ToonStream] AWSStream API URL:', m3u8Url);
             
             // Prepare form data
             var formData = new URLSearchParams();
             formData.append('hash', extractedHash);
             formData.append('r', mainUrl);
             
-            // Make the request
+            // Make the AJAX request
             fetch(m3u8Url, {
                 method: 'POST',
                 headers: {
                     'User-Agent': HEADERS['User-Agent'],
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'x-requested-with': 'XMLHttpRequest',
-                    'Referer': referer || embedUrl
+                    'Referer': embedUrl
                 },
                 body: formData.toString()
             })
             .then(function (response) {
-                if (!response.ok) throw new Error('HTTP ' + response.status);
+                if (!response.ok) {
+                    console.error('[ToonStream] AWSStream API error:', response.status);
+                    throw new Error('HTTP ' + response.status);
+                }
                 return response.json();
             })
             .then(function (data) {
+                console.log('[ToonStream] AWSStream response:', data);
+                
                 if (data && data.videoSource) {
+                    var videoUrl = data.videoSource;
+                    console.log('[ToonStream] Found video URL:', videoUrl);
+                    
                     resolve([{
-                        url: data.videoSource,
+                        url: videoUrl,
                         quality: '1080p',
-                        serverType: 'AWSStream',
+                        serverType: isZephyrflick ? 'Zephyrflick' : 'AWSStream',
                         headers: {
                             'Referer': mainUrl,
-                            'User-Agent': HEADERS['User-Agent']
+                            'User-Agent': HEADERS['User-Agent'],
+                            'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5'
                         }
                     }]);
                 } else {
+                    console.log('[ToonStream] No videoSource in response');
                     resolve([]);
                 }
             })
@@ -316,21 +283,22 @@ function extractAWSStreamVideo(embedUrl, referer) {
 }
 
 // Extract from embed page
-function extractFromEmbed(embedUrl, referer) {
-    return fetchRequest(embedUrl).then(function (html) {
-        var streams = [];
+function extractFromEmbedPage(embedUrl) {
+    return new Promise(function (resolve) {
+        console.log('[ToonStream] Processing embed page:', embedUrl);
         
-        // Check if this is an AWSStream/Zephyrflick embed
-        if (embedUrl.includes('awstream.net') || embedUrl.includes('zephyrflick.top')) {
-            return extractAWSStreamVideo(embedUrl, referer);
-        }
-        
-        // Look for nested iframe
-        var doc = parseHTML(html);
-        var iframe = doc.querySelector('iframe');
-        if (iframe) {
-            var nestedUrl = iframe.getAttribute('src');
-            if (nestedUrl) {
+        fetchRequest(embedUrl).then(function (html) {
+            // Check if this is AWSStream/Zephyrflick
+            if (embedUrl.includes('awstream.net') || embedUrl.includes('zephyrflick.top')) {
+                return extractAWSStreamVideo(embedUrl).then(resolve);
+            }
+            
+            // Look for nested iframe
+            var iframeMatch = html.match(/<iframe[^>]*src="([^"]+)"[^>]*>/i);
+            if (iframeMatch) {
+                var nestedUrl = iframeMatch[1];
+                console.log('[ToonStream] Found nested iframe:', nestedUrl);
+                
                 // Fix URL if relative
                 if (nestedUrl.startsWith('//')) {
                     nestedUrl = 'https:' + nestedUrl;
@@ -339,42 +307,36 @@ function extractFromEmbed(embedUrl, referer) {
                     nestedUrl = baseDomain + nestedUrl;
                 }
                 
-                // Recursively extract from nested iframe
-                return extractFromEmbed(nestedUrl, embedUrl);
+                // Recursively extract
+                return extractFromEmbedPage(nestedUrl).then(resolve);
             }
-        }
-        
-        // Look for direct video URLs in the page
-        var videoPatterns = [
-            /(https?:\/\/[^\s"'<>]+\.m3u8)/gi,
-            /(https?:\/\/[^\s"'<>]+\.mp4)/gi,
-            /"file"\s*:\s*"([^"]+\.m3u8)"/gi,
-            /"src"\s*:\s*"([^"]+\.m3u8)"/gi
-        ];
-        
-        for (var i = 0; i < videoPatterns.length; i++) {
-            var matches = html.match(videoPatterns[i]);
-            if (matches) {
-                for (var j = 0; j < matches.length; j++) {
-                    var url = matches[j].replace(/\\\//g, '/').replace(/^"|"$/g, '');
-                    if (url.includes('.m3u8') || url.includes('.mp4')) {
-                        streams.push({
-                            url: url,
-                            quality: extractQualityFromUrl(url),
-                            serverType: 'Direct',
-                            headers: {
-                                'Referer': embedUrl,
-                                'User-Agent': HEADERS['User-Agent']
-                            }
-                        });
-                    }
+            
+            // Look for direct m3u8 URLs
+            var m3u8Matches = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8)/gi);
+            var streams = [];
+            
+            if (m3u8Matches) {
+                console.log('[ToonStream] Found direct m3u8 URLs:', m3u8Matches.length);
+                
+                for (var i = 0; i < m3u8Matches.length; i++) {
+                    var url = m3u8Matches[i];
+                    streams.push({
+                        url: url,
+                        quality: extractQualityFromUrl(url),
+                        serverType: 'Direct',
+                        headers: {
+                            'Referer': embedUrl,
+                            'User-Agent': HEADERS['User-Agent']
+                        }
+                    });
                 }
             }
-        }
-        
-        return streams;
-    }).catch(function () {
-        return [];
+            
+            resolve(streams);
+        }).catch(function (error) {
+            console.error('[ToonStream] Embed page error:', error);
+            resolve([]);
+        });
     });
 }
 
@@ -382,164 +344,159 @@ function extractFromEmbed(embedUrl, referer) {
 function extractQualityFromUrl(url) {
     var patterns = [
         /(\d{3,4})p/i,
-        /quality[_-]?(\d{3,4})/i,
-        /(\d{3,4})x\d{3,4}/i
+        /quality[_-]?(\d{3,4})/i
     ];
+    
     for (var i = 0; i < patterns.length; i++) {
-        var m = url.match(patterns[i]);
-        if (m) {
-            var q = parseInt(m[1]);
+        var match = url.match(patterns[i]);
+        if (match) {
+            var q = parseInt(match[1]);
             if (q >= 240 && q <= 4320) return q + 'p';
         }
     }
+    
     return 'Unknown';
 }
 
-// Extract streams from ToonStream page
-function extractStreamsFromPage(pageUrl, season, episode) {
-    return fetchRequest(pageUrl).then(function (html) {
-        var streams = [];
-        var doc = parseHTML(html);
-        
-        // Check if it's a series page
-        if (pageUrl.includes('/series/') || doc.querySelector('div.aa-drp.choose-season')) {
-            return extractSeriesStreams(doc, pageUrl, season, episode);
-        } else {
-            return extractMovieStreams(doc, pageUrl);
-        }
-    }).catch(function (error) {
-        console.error('[ToonStream] Error loading page:', pageUrl, error);
-        return [];
-    });
-}
-
-// Extract movie streams
-function extractMovieStreams(doc, pageUrl) {
+// Load season episodes via AJAX (for cartoons series)
+function loadSeasonEpisodes(dataPost, dataSeason, targetEpisode) {
     return new Promise(function (resolve) {
-        var streams = [];
-        var iframes = doc.querySelectorAll('#aa-options > div > iframe');
+        console.log('[ToonStream] Loading season:', { dataPost: dataPost, dataSeason: dataSeason });
         
-        if (!iframes || iframes.length === 0) {
-            resolve(streams);
-            return;
-        }
+        var formData = new URLSearchParams();
+        formData.append('action', 'action_select_season');
+        formData.append('season', dataSeason);
+        formData.append('post', dataPost);
         
-        var processed = 0;
-        var total = iframes.length;
-        
-        for (var i = 0; i < iframes.length; i++) {
-            (function (iframe) {
-                var serverLink = iframe.getAttribute('data-src');
-                if (serverLink) {
-                    console.log('[ToonStream] Processing embed:', serverLink);
-                    
-                    extractFromEmbed(serverLink, pageUrl)
-                        .then(function (videoStreams) {
-                            streams = streams.concat(videoStreams);
-                            processed++;
-                            if (processed === total) resolve(streams);
-                        })
-                        .catch(function () {
-                            processed++;
-                            if (processed === total) resolve(streams);
-                        });
-                } else {
-                    processed++;
-                    if (processed === total) resolve(streams);
-                }
-            })(iframes[i]);
-        }
-    });
-}
-
-// Extract series streams
-function extractSeriesStreams(doc, pageUrl, season, episode) {
-    return new Promise(function (resolve) {
-        var streams = [];
-        var seasonLinks = doc.querySelectorAll('div.aa-drp.choose-season > ul > li > a');
-        
-        if (!seasonLinks || seasonLinks.length === 0) {
-            resolve(streams);
-            return;
-        }
-        
-        var processed = 0;
-        var total = seasonLinks.length;
-        
-        for (var i = 0; i < seasonLinks.length; i++) {
-            (function (seasonLink) {
-                var dataPost = seasonLink.getAttribute('data-post');
-                var dataSeason = seasonLink.getAttribute('data-season');
-                var seasonText = seasonLink.textContent;
+        fetch(AJAX_URL, {
+            method: 'POST',
+            headers: Object.assign({}, HEADERS, {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest'
+            }),
+            body: formData.toString()
+        })
+        .then(function (response) { return response.text(); })
+        .then(function (seasonHtml) {
+            console.log('[ToonStream] Season HTML length:', seasonHtml.length);
+            
+            // Parse episode links
+            var episodeRegex = /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?Episode\s+(\d+)[\s\S]*?<\/a>/gi;
+            var episodeMatch;
+            var episodes = [];
+            
+            while ((episodeMatch = episodeRegex.exec(seasonHtml)) !== null) {
+                var episodeUrl = episodeMatch[1];
+                var episodeNum = parseInt(episodeMatch[2]);
                 
-                // If specific season requested, check match
-                if (season && !seasonText.includes('Season ' + season)) {
-                    processed++;
-                    if (processed === total) resolve(streams);
-                    return;
+                // Fix URL if needed
+                if (episodeUrl && !episodeUrl.startsWith('http')) {
+                    episodeUrl = episodeUrl.startsWith('//') ? 'https:' + episodeUrl : MAIN_URL + episodeUrl;
                 }
                 
-                // Load season data via AJAX
-                var formData = new URLSearchParams();
-                formData.append('action', 'action_select_season');
-                formData.append('season', dataSeason);
-                formData.append('post', dataPost);
-                
-                fetch(AJAX_URL, {
-                    method: 'POST',
-                    headers: Object.assign({}, HEADERS, {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    }),
-                    body: formData.toString()
-                })
-                .then(function (response) { return response.text(); })
-                .then(function (seasonHtml) {
-                    // Extract episode links from season HTML
-                    var episodeRegex = /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?Episode\s+(\d+)[\s\S]*?<\/a>/gi;
-                    var episodeMatch;
-                    var episodePromises = [];
-                    
-                    while ((episodeMatch = episodeRegex.exec(seasonHtml)) !== null) {
-                        var episodeUrl = episodeMatch[1];
-                        var episodeNum = parseInt(episodeMatch[2]);
-                        
-                        // If specific episode requested, check match
-                        if (episode && episodeNum !== episode) {
-                            continue;
-                        }
-                        
-                        // Fix URL if needed
-                        if (episodeUrl && !episodeUrl.startsWith('http')) {
-                            episodeUrl = episodeUrl.startsWith('//') ? 'https:' + episodeUrl : MAIN_URL + episodeUrl;
-                        }
-                        
-                        // Extract streams from episode page
-                        var epPromise = extractStreamsFromPage(episodeUrl)
-                            .then(function (episodeStreams) {
-                                streams = streams.concat(episodeStreams);
-                            });
-                        episodePromises.push(epPromise);
-                    }
-                    
-                    // Wait for all episode streams to be processed
-                    Promise.all(episodePromises)
-                        .then(function () {
-                            processed++;
-                            if (processed === total) resolve(streams);
-                        })
-                        .catch(function () {
-                            processed++;
-                            if (processed === total) resolve(streams);
-                        });
-                })
-                .catch(function (error) {
-                    console.error('[ToonStream] Error loading season:', error);
-                    processed++;
-                    if (processed === total) resolve(streams);
+                episodes.push({
+                    url: episodeUrl,
+                    number: episodeNum
                 });
-            })(seasonLinks[i]);
-        }
+            }
+            
+            console.log('[ToonStream] Found episodes:', episodes.length);
+            
+            // Find target episode or use first one
+            var targetEp = episodes[0];
+            if (targetEpisode) {
+                for (var i = 0; i < episodes.length; i++) {
+                    if (episodes[i].number === targetEpisode) {
+                        targetEp = episodes[i];
+                        break;
+                    }
+                }
+            }
+            
+            if (targetEp) {
+                console.log('[ToonStream] Selected episode:', targetEp);
+                resolve(targetEp.url);
+            } else {
+                console.log('[ToonStream] No episode found');
+                resolve(null);
+            }
+        })
+        .catch(function (error) {
+            console.error('[ToonStream] Season load error:', error);
+            resolve(null);
+        });
+    });
+}
+
+// Extract streams from a ToonStream content page
+function extractStreamsFromContentPage(pageUrl, season, episode) {
+    return new Promise(function (resolve) {
+        console.log('[ToonStream] Loading content page:', pageUrl);
+        
+        fetchRequest(pageUrl).then(function (html) {
+            var streams = [];
+            
+            // Check if it's a series with seasons
+            var seasonLinksMatch = html.match(/<div[^>]*aa-drp[^>]*choose-season[^>]*>/i);
+            var isSeries = pageUrl.includes('/series/') || seasonLinksMatch;
+            
+            if (isSeries && season) {
+                console.log('[ToonStream] Detected series with season:', season);
+                
+                // Find season data
+                var seasonRegex = /<a[^>]*data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>[\s\S]*?Season\s+(\d+)[\s\S]*?<\/a>/gi;
+                var seasonMatch;
+                var foundSeason = null;
+                
+                while ((seasonMatch = seasonRegex.exec(html)) !== null) {
+                    var seasonNum = parseInt(seasonMatch[3]);
+                    if (seasonNum === season) {
+                        foundSeason = {
+                            dataPost: seasonMatch[1],
+                            dataSeason: seasonMatch[2]
+                        };
+                        break;
+                    }
+                }
+                
+                if (foundSeason) {
+                    // Load episodes for this season
+                    return loadSeasonEpisodes(foundSeason.dataPost, foundSeason.dataSeason, episode)
+                        .then(function (episodeUrl) {
+                            if (episodeUrl) {
+                                // Extract from episode page
+                                return extractStreamsFromContentPage(episodeUrl);
+                            }
+                            resolve([]);
+                        });
+                }
+            }
+            
+            // Extract iframe embeds (for both movies and episodes)
+            var iframeRegex = /<iframe[^>]*data-src="([^"]+)"[^>]*>/gi;
+            var iframeMatch;
+            var embedPromises = [];
+            
+            while ((iframeMatch = iframeRegex.exec(html)) !== null) {
+                var embedUrl = iframeMatch[1];
+                console.log('[ToonStream] Found embed:', embedUrl);
+                
+                embedPromises.push(
+                    extractFromEmbedPage(embedUrl).then(function (embedStreams) {
+                        streams = streams.concat(embedStreams);
+                    })
+                );
+            }
+            
+            // Wait for all embeds to be processed
+            Promise.all(embedPromises).then(function () {
+                console.log('[ToonStream] Total streams found:', streams.length);
+                resolve(streams);
+            });
+        }).catch(function (error) {
+            console.error('[ToonStream] Content page error:', error);
+            resolve([]);
+        });
     });
 }
 
@@ -571,6 +528,7 @@ function formatToNuvioStreams(streams, mediaTitle) {
     // Remove duplicates
     var uniqueLinks = [];
     var seenUrls = {};
+    
     for (var j = 0; j < links.length; j++) {
         if (!seenUrls[links[j].url]) {
             seenUrls[links[j].url] = true;
@@ -585,70 +543,98 @@ function formatToNuvioStreams(streams, mediaTitle) {
     return uniqueLinks;
 }
 
-// Main Nuvio function
+// Main Nuvio function - CARTOON FOCUSED
 function getStreams(tmdbId, mediaType, season, episode) {
     var rid = createRequestId();
-    logRid(rid, 'getStreams start', { tmdbId: tmdbId, mediaType: mediaType, season: season, episode: episode });
+    logRid(rid, 'getStreams start (CARTOON MODE)', { 
+        tmdbId: tmdbId, 
+        mediaType: mediaType, 
+        season: season, 
+        episode: episode 
+    });
     
     var mediaInfo = null;
     
-    // Step 1: Get title from TMDB
+    // Step 1: Get cartoon details from TMDB
     return getTMDBDetails(tmdbId, mediaType)
         .then(function (tmdbData) {
             if (!tmdbData || !tmdbData.title) {
-                throw new Error('Could not get TMDB details');
+                throw new Error('Could not get TMDB details for cartoon');
             }
-            mediaInfo = tmdbData;
-            logRid(rid, 'TMDB details', { title: tmdbData.title, year: tmdbData.year });
             
-            // Step 2: Search ToonStream with the title
+            mediaInfo = tmdbData;
+            logRid(rid, 'TMDB cartoon details', { 
+                title: tmdbData.title, 
+                year: tmdbData.year,
+                genres: tmdbData.genres 
+            });
+            
+            // Step 2: DIRECT SEARCH on ToonStream (no MAL/AniList!)
             var searchQuery = tmdbData.title;
+            
+            // Add year for better matching
             if (tmdbData.year) {
                 searchQuery += ' ' + tmdbData.year;
             }
-            return searchToonStream(searchQuery);
+            
+            logRid(rid, 'Searching ToonStream directly for cartoon:', searchQuery);
+            return searchToonStreamDirect(searchQuery);
         })
         .then(function (searchResults) {
             if (!searchResults || searchResults.length === 0) {
-                throw new Error('No results found on ToonStream');
+                logRid(rid, 'No cartoon results found on ToonStream');
+                throw new Error('Cartoon not found on ToonStream');
             }
             
-            logRid(rid, 'Search results', { count: searchResults.length });
+            logRid(rid, 'Cartoon search results', { count: searchResults.length });
             
-            // Find the best match (prefer correct media type)
+            // Find best match (simple title matching)
             var bestMatch = searchResults[0];
+            var searchTitle = mediaInfo.title.toLowerCase();
+            
             for (var i = 0; i < searchResults.length; i++) {
-                if ((mediaType === 'tv' && searchResults[i].type === 'tv') ||
-                    (mediaType === 'movie' && searchResults[i].type === 'movie')) {
+                var resultTitle = searchResults[i].title.toLowerCase();
+                if (resultTitle.includes(searchTitle) || searchTitle.includes(resultTitle)) {
                     bestMatch = searchResults[i];
                     break;
                 }
             }
             
-            logRid(rid, 'Selected match', { title: bestMatch.title, url: bestMatch.url, type: bestMatch.type });
+            logRid(rid, 'Selected cartoon match', { 
+                title: bestMatch.title, 
+                url: bestMatch.url, 
+                type: bestMatch.type 
+            });
             
-            // Step 3: Extract streams from the selected page
-            return extractStreamsFromPage(bestMatch.url, season, episode);
+            // Step 3: Extract streams from cartoon page
+            return extractStreamsFromContentPage(bestMatch.url, season, episode);
         })
         .then(function (streams) {
-            logRid(rid, 'Extracted raw streams', { count: streams.length });
+            logRid(rid, 'Extracted cartoon streams', { count: streams.length });
             
             // Build media title
             var mediaTitle = mediaInfo.title;
-            if (mediaType === 'tv' && season && episode) {
-                var s = String(season).padStart(2, '0');
-                var e = String(episode).padStart(2, '0');
-                mediaTitle = mediaInfo.title + ' S' + s + 'E' + e;
-            } else if (mediaInfo.year) {
-                mediaTitle = mediaInfo.title + ' (' + mediaInfo.year + ')';
+            if (mediaType === 'tv') {
+                if (season && episode) {
+                    var s = String(season).padStart(2, '0');
+                    var e = String(episode).padStart(2, '0');
+                    mediaTitle = mediaInfo.title + ' S' + s + 'E' + e;
+                } else if (season) {
+                    mediaTitle = mediaInfo.title + ' Season ' + season;
+                }
+            }
+            
+            if (mediaInfo.year) {
+                mediaTitle += ' (' + mediaInfo.year + ')';
             }
             
             var formatted = formatToNuvioStreams(streams, mediaTitle);
-            logRid(rid, 'Returning formatted streams', { count: formatted.length });
+            logRid(rid, 'Returning formatted cartoon streams', { count: formatted.length });
+            
             return formatted;
         })
         .catch(function (err) {
-            logRid(rid, 'ERROR: ' + (err && err.message ? err.message : String(err)));
+            logRid(rid, 'CARTOON ERROR: ' + (err && err.message ? err.message : String(err)));
             return [];
         });
 }
