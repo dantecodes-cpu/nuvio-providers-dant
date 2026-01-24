@@ -588,7 +588,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
             }
           }
           
-          const relevantResults = filterRelevantResults(filteredResults, title);
+          const relevantResults = filterRelevantResults(searchResults, title, platform);
           if (relevantResults.length === 0) {
             console.log(`[NetMirror] No relevant results on ${platform}, trying next strategy...`);
             return trySearch(strategyIndex + 1);
