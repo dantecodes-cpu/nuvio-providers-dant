@@ -1,3 +1,4 @@
+
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
 var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
@@ -442,6 +443,8 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
     
     // 🔧 SMART PLATFORM SELECTION BASED ON CONTENT
     let platforms = [];
+    // 🚫 TEMP: disable Disney for debugging
+platforms = ["primevideo", "netflix"];
     
     // Check if content is likely on specific platforms
     const titleLower = title.toLowerCase();
@@ -449,6 +452,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
                             titleLower.includes("jack ryan") || 
                             titleLower.includes("the marvelous mrs. maisel") ||
                             titleLower.includes("invincible");
+
     
     const isDisneyPlus = titleLower.includes("mandalorian") || 
                         titleLower.includes("wanda vision") ||
