@@ -5,7 +5,7 @@ const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const MAIN_URL = "https://toonstream.one";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
-console.log('[ToonStream] âœ… Provider Initialized');
+console.log('[ToonStream] ✓ Provider Initialized');
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
@@ -15,11 +15,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`;
         const tmdbResp = await fetchWithTimeout(tmdbUrl);
         const tmdbData = await tmdbResp.json();
-        
+
         let title = mediaType === 'movie' ? tmdbData.title : tmdbData.name;
         const cleanTitle = title.trim();
         const year = mediaType === 'movie' ? (tmdbData.release_date || '').split('-')[0] : (tmdbData.first_air_date || '').split('-')[0];
-
         console.log(`[ToonStream] Searching: "${cleanTitle}" (${year})`);
 
         // ==========================================================
@@ -27,18 +26,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         // ==========================================================
         const searchUrl = `${MAIN_URL}/page/1/?s=${encodeURIComponent(cleanTitle)}`;
         const searchHtml = await fetchHtml(searchUrl);
-
         if (!searchHtml) return [];
 
         let results = [];
         const linkRegex = /href="([^"]*toonstream\.one\/(?:movies|series)\/[^"]+)"/gi;
         let match;
-        
         while ((match = linkRegex.exec(searchHtml)) !== null) {
             const url = match[1];
             const slug = url.split('/').filter(Boolean).pop();
             const inferredTitle = slug.replace(/-/g, ' ');
-            
             if (!results.some(r => r.url === url)) {
                 results.push({ url, title: inferredTitle });
             }
@@ -55,9 +51,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         // --- MATCHING LOGIC ---
         const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
         const target = normalize(title);
-        
-        let matchedItem = results.find(r => normalize(r.title).includes(target)) || 
-                          results.find(r => target.includes(normalize(r.title)));
+        let matchedItem = results.find(r => normalize(r.title).includes(target)) || results.find(r => target.includes(normalize(r.title)));
 
         if (!matchedItem) {
             console.log(`[ToonStream] No content found for "${cleanTitle}"`);
@@ -72,11 +66,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         // ==========================================================
         if (mediaType === 'tv') {
             const pageHtml = await fetchHtml(contentUrl);
-            
             // Regex to find Season ID
             const seasonRegex = new RegExp(`data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>.*?Season\\s*${season}\\b`, 'i');
             const sMatch = pageHtml.match(seasonRegex);
-
             if (!sMatch) {
                 console.log(`[ToonStream] Season ${season} not found.`);
                 return [];
@@ -112,7 +104,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         // 4. EXTRACT PLAYERS
         // ==========================================================
         const playerHtml = await fetchHtml(contentUrl);
-        
         // Find internal embeds
         const embedRegex = /(?:data-src|src)="([^"]*toonstream\.one\/home\/\?trembed=[^"]+)"/gi;
         const rawEmbeds = [];
@@ -120,12 +111,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         while ((em = embedRegex.exec(playerHtml)) !== null) {
             rawEmbeds.push(em[1].replace(/&#038;/g, '&'));
         }
-        
-        console.log(`[ToonStream] Processing ${rawEmbeds.length} embeds...`);
 
+        console.log(`[ToonStream] Processing ${rawEmbeds.length} embeds...`);
         const streams = [];
         const processedHosts = new Set();
-        
+
         // Sort embeds to try 0,1 first
         rawEmbeds.sort();
 
@@ -142,7 +132,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 if (realHost.includes('awstream') || realHost.includes('zephyrflick')) {
                     const m3u8 = await extractAWSStream(realHost);
                     if (m3u8) {
-                        streams.push({ name: "ToonStream [AWS]", title: "1080p (Fast)", type: "url", url: m3u8 });
+                        streams.push({
+                            name: "ToonStream [AWS]",
+                            title: "1080p (Fast)",
+                            type: "url",
+                            url: m3u8
+                        });
                         extracted = true;
                     }
                 }
@@ -152,7 +147,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     const cleanUrl = realHost.replace('/e/', '/');
                     const m3u8Links = await extractGeneric(cleanUrl);
                     if (m3u8Links.length > 0) {
-                        m3u8Links.forEach(link => streams.push({ name: "ToonStream [Ruby]", title: "Auto", type: "url", url: link }));
+                        m3u8Links.forEach(link => streams.push({
+                            name: "ToonStream [Ruby]",
+                            title: "Auto",
+                            type: "url",
+                            url: link
+                        }));
                         extracted = true;
                     }
                 }
@@ -161,7 +161,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 if (!extracted) {
                     const m3u8Links = await extractGeneric(realHost);
                     if (m3u8Links.length > 0) {
-                        m3u8Links.forEach(link => streams.push({ name: "ToonStream [HLS]", title: "Auto", type: "url", url: link }));
+                        m3u8Links.forEach(link => streams.push({
+                            name: "ToonStream [HLS]",
+                            title: "Auto",
+                            type: "url",
+                            url: link
+                        }));
                         extracted = true;
                     }
                 }
@@ -169,18 +174,19 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 // D. Fallback Iframe
                 if (!extracted) {
                     const host = new URL(realHost).hostname.replace('www.', '');
-                    streams.push({ 
-                        name: "ToonStream [Embed]", 
-                        title: host, 
-                        type: "iframe", 
-                        url: realHost 
+                    streams.push({
+                        name: "ToonStream [Embed]",
+                        title: host,
+                        type: "iframe",
+                        url: realHost
                     });
                 }
-            } catch (innerErr) { }
+            } catch (innerErr) {
+                // Silently continue to next embed
+            }
         }
 
         return streams;
-
     } catch (e) {
         console.error(`[ToonStream] Error: ${e.message}`);
         return [];
@@ -195,7 +201,10 @@ async function fetchWithTimeout(url, options = {}) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), 12000);
     try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
         clearTimeout(id);
         return response;
     } catch (error) {
@@ -215,9 +224,15 @@ async function fetchHtml(url, referer = MAIN_URL, method = 'GET', body = null) {
             headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
             headers['X-Requested-With'] = 'XMLHttpRequest';
         }
-        const res = await fetchWithTimeout(url, { method, headers, body });
+        const res = await fetchWithTimeout(url, {
+            method,
+            headers,
+            body
+        });
         return res.ok ? res.text() : null;
-    } catch (e) { return null; }
+    } catch (e) {
+        return null;
+    }
 }
 
 async function resolveRedirect(url, referer) {
@@ -232,15 +247,23 @@ async function extractAWSStream(url) {
         const domain = new URL(url).origin;
         const hash = url.split('/').pop().split('?')[0];
         const apiUrl = `${domain}/player/index.php?data=${hash}&do=getVideo`;
-        const body = new URLSearchParams(); body.append('hash', hash); body.append('r', domain);
+        const body = new URLSearchParams();
+        body.append('hash', hash);
+        body.append('r', domain);
         const res = await fetchWithTimeout(apiUrl, {
             method: 'POST',
-            headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': USER_AGENT },
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': USER_AGENT
+            },
             body: body
         });
         const json = await res.json();
         return (json && json.videoSource && json.videoSource !== '0') ? json.videoSource : null;
-    } catch (e) { return null; }
+    } catch (e) {
+        return null;
+    }
 }
 
 async function extractGeneric(url) {
@@ -248,33 +271,42 @@ async function extractGeneric(url) {
         const html = await fetchHtml(url);
         if (!html) return [];
         let content = html;
-        const packerRegex = /(eval\(function\(p,a,c,k,e,d\)[\s\S]*?\.split\('\|'\)\)\))/;
+        
+        const packerRegex = /eval\(function\(p,a,c,k,e,d\)\{.*?\}(.*)\)\)/;
         const packedMatch = html.match(packerRegex);
         if (packedMatch) {
             const unpacked = unpack(packedMatch[1]);
             if (unpacked) content += unpacked;
         }
+        
         const links = [];
         const m3u8Regex = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/gi;
         let m;
         while ((m = m3u8Regex.exec(content)) !== null) {
-            const link = m[1].replace(/\\/g, '');
+            const link = m[1].replace(/\\\//g, '/');
             if (!links.includes(link) && !link.includes('red/pixel')) links.push(link);
         }
         return links;
-    } catch (e) { return []; }
+    } catch (e) {
+        return [];
+    }
 }
 
 function unpack(p) {
     try {
-        let params = p.match(/\}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/);
+        let params = p.match(/\}('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/);
         if (!params) return null;
         let [_, payload, radix, count, dictionary] = params;
         dictionary = dictionary.split('|');
         radix = parseInt(radix);
         return payload.replace(/\b\w+\b/g, (w) => dictionary[parseInt(w, 36)] || w);
-    } catch (e) { return null; }
+    } catch (e) {
+        return null;
+    }
 }
 
-if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams }; }
-else { global.ToonStreamProvider = { getStreams }; }
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else {
+    global.ToonStreamProvider = { getStreams };
+}
