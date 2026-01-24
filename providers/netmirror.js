@@ -505,19 +505,41 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       
       return exactMatches / Math.max(words1.length, words2.length);
     }
+
+
+
+    function filterRelevantResults(searchResults, query, platform) {
+  const q = query.toLowerCase().trim();
+
+  // 🔴 Cloudstream rule #1: exact title match wins
+  const exactMatches = searchResults.filter(r =>
+    r.title &&
+    r.title.toLowerCase().trim() === q
+  );
+
+  if (exactMatches.length > 0) {
+    console.log(`[NetMirror] Exact title match found (${platform})`);
+    return exactMatches;
+  }
+
+  // 🔴 Cloudstream rule #2: stricter Prime filtering
+  const threshold =
+    platform === "primevideo" ? 0.75 :
+    platform === "disney" ? 0.6 :
+    0.4;
+
+  const scored = searchResults
+    .map(result => ({
+      result,
+      similarity: calculateSimilarity(result.title, q)
+    }))
+    .filter(item => item.similarity >= threshold)
+    .sort((a, b) => b.similarity - a.similarity);
+
+  return scored.map(item => item.result);
+}
+
     
-    function filterRelevantResults(searchResults, query) {
-      const filtered = searchResults.filter((result) => {
-        const similarity = calculateSimilarity(result.title, query);
-        return similarity >= 0.4;
-      });
-      
-      return filtered.sort((a, b) => {
-        const simA = calculateSimilarity(a.title, query);
-        const simB = calculateSimilarity(b.title, query);
-        return simB - simA;
-      });
-    }
     
     function tryPlatform(platformIndex) {
       if (platformIndex >= platforms.length) {
