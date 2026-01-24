@@ -517,7 +517,7 @@ function tryPlatform(platformIndex) {
         return trySearch(strategyIndex + 1);  
       }  
         
-      const relevantResults = filterRelevantResults(searchResults, title);  
+      const relevantResults = filterRelevantResults(searchResults, title, platform);  
       if (relevantResults.length === 0) {  
         console.log(`[NetMirror] Found ${searchResults.length} results but none were relevant enough, trying next strategy...`);  
         return trySearch(strategyIndex + 1);  
