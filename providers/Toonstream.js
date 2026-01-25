@@ -1,5 +1,6 @@
 // ToonStream Provider for Nuvio
-// Version: 10.0 (VidStack API Fix + GDMirror Support)
+// Version: 11.0 (Quality Parsing Enabled)
+// Features: Splits "Auto" links into 1080p, 720p, 480p, etc.
 
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const MAIN_URL = "https://toonstream.one";
@@ -106,10 +107,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 // A. AWSStream / Zephyr
                 if (realUrl.includes('awstream') || realUrl.includes('zephyrflick')) {
                     const res = await extractAWSStream(realUrl);
-                    if (res) { streams.push(res); extracted = true; }
+                    if (res && res.length > 0) { streams.push(...res); extracted = true; }
                 }
 
-                // B. VidStack API (Cloudy, StreamUp) - Now with 'r' param
+                // B. VidStack API (Cloudy, StreamUp)
                 if (!extracted && (realUrl.includes('cloudy') || realUrl.includes('strmup'))) {
                     const res = await extractVidStackAPI(realUrl);
                     if (res && res.length > 0) {
@@ -128,7 +129,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     }
                 }
 
-                // D. GDMirror (New Script Scraper)
+                // D. GDMirror
                 if (!extracted && realUrl.includes('gdmirror')) {
                     const res = await extractUniversal(realUrl);
                     if (res.length > 0) {
@@ -177,6 +178,96 @@ async function resolveRedirect(url, referer) {
     return match ? (match[1].startsWith('//') ? 'https:' + match[1] : match[1]) : null;
 }
 
+// ðŸ“¦ NEW: QUALITY PARSER (Splits M3U8 into 1080p, 720p, etc.)
+async function parseHLS(url, headers, sourceName) {
+    const streams = [];
+    try {
+        const m3u8Content = await req(url, { headers });
+        if (!m3u8Content) return [];
+
+        const lines = m3u8Content.split('\n');
+        
+        // Loop through the M3U8 file
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line.startsWith('#EXT-X-STREAM-INF')) {
+                // Extract Resolution
+                const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+                const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
+                
+                let quality = "Auto";
+                let height = 0;
+
+                if (resMatch) {
+                    height = parseInt(resMatch[2]);
+                    if (height >= 2160) quality = "4K";
+                    else if (height >= 1080) quality = "1080p";
+                    else if (height >= 720) quality = "720p";
+                    else if (height >= 480) quality = "480p";
+                    else quality = "360p";
+                }
+
+                // Get URL (Next line)
+                let nextLine = lines[i + 1]?.trim();
+                if (nextLine && !nextLine.startsWith('#')) {
+                    // Resolve relative URLs in playlist
+                    let streamUrl = nextLine;
+                    if (!streamUrl.startsWith('http')) {
+                        const u = new URL(url);
+                        if (streamUrl.startsWith('/')) {
+                            streamUrl = u.origin + streamUrl;
+                        } else {
+                            const basePath = url.substring(0, url.lastIndexOf('/') + 1);
+                            streamUrl = basePath + streamUrl;
+                        }
+                    }
+
+                    streams.push({
+                        name: sourceName,
+                        title: quality, // Explicit quality (e.g., 1080p)
+                        type: "url",
+                        url: streamUrl,
+                        headers: headers
+                    });
+                }
+            }
+        }
+    } catch (e) { }
+
+    // Always fallback to the original "Auto" link if parsing failed or returned nothing
+    if (streams.length === 0) {
+        streams.push({
+            name: sourceName,
+            title: "Auto",
+            type: "url",
+            url: url,
+            headers: headers
+        });
+    } else {
+        // Also add the Auto link at the top/bottom for convenience
+        streams.push({
+            name: sourceName,
+            title: "Auto (Adaptive)",
+            type: "url",
+            url: url,
+            headers: headers
+        });
+    }
+
+    // Sort by quality (1080p > 720p > Auto)
+    return streams.sort((a, b) => {
+        const getScore = (t) => {
+            if (t.includes("4K")) return 4000;
+            if (t.includes("1080")) return 1080;
+            if (t.includes("720")) return 720;
+            if (t.includes("480")) return 480;
+            if (t.includes("Auto")) return 0; // Auto at bottom (or top if preferred)
+            return -1;
+        };
+        return getScore(b.title) - getScore(a.title);
+    });
+}
+
 async function extractAWSStream(url) {
     try {
         const domain = new URL(url).origin;
@@ -190,7 +281,8 @@ async function extractAWSStream(url) {
         });
         const json = JSON.parse(jsonText);
         if (json && json.videoSource && json.videoSource !== '0') {
-            return { name: "ToonStream [AWS]", title: "1080p", type: "url", url: json.videoSource };
+            // PASS THROUGH PARSER
+            return await parseHLS(json.videoSource, {}, "ToonStream [AWS]");
         }
     } catch (e) { return null; }
 }
@@ -199,12 +291,9 @@ async function extractVidStackAPI(url) {
     const res = [];
     try {
         const u = new URL(url);
-        // Extract ID: cloudy.upns.one/#ptia8 -> ptia8
         let id = u.hash.replace('#', '') || u.pathname.split('/').pop();
-        
         const apiUrl = `${u.origin}/api/source/${id}`;
         
-        // V10 FIX: Add 'r' (Referer) to body. Critical for Cloudy/StreamUp.
         const body = new URLSearchParams();
         body.append('r', url); 
         body.append('d', u.hostname);
@@ -217,17 +306,15 @@ async function extractVidStackAPI(url) {
 
         const json = JSON.parse(jsonText);
         if (json && json.data && Array.isArray(json.data)) {
-            json.data.forEach(item => {
+            for (const item of json.data) {
                 if (item.file && (item.file.includes('.m3u8') || item.type === 'hls')) {
-                     res.push({ 
-                        name: `ToonStream [${u.hostname.replace('www.','').split('.')[0]}]`, // e.g. [cloudy]
-                        title: item.label || "Auto", 
-                        type: "url", 
-                        url: item.file,
-                        headers: { "Referer": url }
-                    });
+                     const headers = { "Referer": url };
+                     const name = `ToonStream [${u.hostname.replace('www.','').split('.')[0]}]`;
+                     // PASS THROUGH PARSER
+                     const qualities = await parseHLS(item.file, headers, name);
+                     res.push(...qualities);
                 }
-            });
+            }
         }
     } catch (e) { }
     return res;
@@ -263,7 +350,6 @@ async function extractUniversal(url) {
             let link = m.groups.url || m[1];
             link = link.replace(/\\/g, '');
 
-            // Relative path fix
             if (!link.startsWith('http')) {
                 const u = new URL(url);
                 if (link.startsWith('/')) {
@@ -282,13 +368,9 @@ async function extractUniversal(url) {
                 else if (host.includes('ruby')) name = "ToonStream [Ruby]";
                 else if (host.includes('gdmirror')) name = "ToonStream [GDMirror]";
 
-                res.push({ 
-                    name: name, 
-                    title: "Auto", 
-                    type: "url", 
-                    url: link,
-                    headers: headers 
-                });
+                // PASS THROUGH PARSER
+                const qualities = await parseHLS(link, headers, name);
+                res.push(...qualities);
             }
         }
 
