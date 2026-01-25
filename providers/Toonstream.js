@@ -6,7 +6,7 @@ const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const MAIN_URL = "https://toonstream.one";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
-console.log('[ToonStream] ✅ Provider Loaded');
+console.log('[ToonStream] âœ… Provider Loaded');
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
@@ -245,4 +245,26 @@ async function extractGeneric(url) {
         while ((m = m3u8Regex.exec(content)) !== null) {
             const link = m[1].replace(/\\/g, '');
             if (!res.some(r => r.url === link) && !link.includes('red/pixel')) {
-                res.push({ name: "ToonStream [HLS]", title: "Auto", type: "url", url: link
+                res.push({ name: "ToonStream [HLS]", title: "Auto", type: "url", url: link });
+            }
+        }
+    } catch (e) {}
+    return res;
+}
+
+function unpack(p) {
+    try {
+        let params = p.match(/\}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/);
+        if (!params) return null;
+        let [_, payload, radix, count, dict] = params;
+        dict = dict.split('|');
+        return payload.replace(/\b\w+\b/g, (w) => dict[parseInt(w, 36)] || w);
+    } catch (e) { return null; }
+}
+
+// Export for Nuvio
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else {
+    global.ToonStreamProvider = { getStreams }; 
+}
