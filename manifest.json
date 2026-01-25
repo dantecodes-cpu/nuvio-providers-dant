@@ -19,7 +19,10 @@
       ],
       "logo": "https://alienfusiongenerator.com/wp-content/uploads/2024/03/Ben-10-Watch-faces.jpg",
       "contentLanguage": [
-        "en"
+        "en",
+        "hin",
+        "tel",
+        "etc"
       ]
     },
     {
@@ -120,20 +123,23 @@
       ]
     },
     {
-      "id": "netmirror",
-      "name": "NetMirror",
-      "description": "Streaming links from netmirror. Automatically disabled on iOS due to compatibility issues.",
+      "id": "Movies&TV",
+      "name": "Movies&TV",
+      "description": "Streaming links from OTT. Automatically disabled on iOS due to compatibility issues.",
       "version": "1.0.2",
-      "author": "Nuvio Team",
+      "author": "Dante",
       "supportedTypes": [
         "movie",
         "tv"
       ],
       "filename": "providers/netmirror.js",
       "enabled": true,
-      "logo": "https://miro.medium.com/v2/resize:fit:1400/1*MDG7pk3Llh3TyJIg3Y_Njw.png",
+      "logo": "https://www.metal-archives.com/images/3/5/4/0/3540498732_logo.jpg?3345",
       "contentLanguage": [
-        "en"
+        "en",
+        "hin",
+        "tel",
+        "etc"
       ],
       "disabledPlatforms": [
         "ios"
