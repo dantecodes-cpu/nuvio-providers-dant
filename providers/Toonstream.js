@@ -1,35 +1,22 @@
 // ToonStream Provider for Nuvio
-// Version: 1.0 (Stable)
-// Features: Native AWS/Ruby Extraction, AJAX Season Support, Loose Search
+// Version: 10.0 (VidStack API Fix + GDMirror Support)
 
 const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 const MAIN_URL = "https://toonstream.one";
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
-
-console.log('[ToonStream] âœ… Provider Loaded');
+const USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // ==========================================================
-        // 1. TMDB LOOKUP
-        // ==========================================================
+        // 1. TMDB & SEARCH
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`;
         const tmdbResp = await req(tmdbUrl);
         const tmdbData = JSON.parse(tmdbResp);
         
         let title = mediaType === 'movie' ? tmdbData.title : tmdbData.name;
-        // Clean title: "Ben 10: Alien Force" -> "Ben 10 Alien Force"
         const cleanTitle = title.replace(/[:\-]/g, ' ').replace(/\s+/g, ' ').trim();
-        const year = mediaType === 'movie' ? (tmdbData.release_date || '').split('-')[0] : (tmdbData.first_air_date || '').split('-')[0];
-
-        console.log(`[ToonStream] Searching: "${cleanTitle}" (${year})`);
-
-        // ==========================================================
-        // 2. SEARCH TOONSTREAM
-        // ==========================================================
+        
         const searchUrl = `${MAIN_URL}/page/1/?s=${encodeURIComponent(cleanTitle)}`;
         const searchHtml = await req(searchUrl);
-
         if (!searchHtml) return [];
 
         const results = [];
@@ -37,65 +24,41 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         
         for (const article of articles) {
             if (!article.includes('href=')) continue;
-
             const urlMatch = article.match(/href="([^"]+)"/);
             const titleMatch = article.match(/<h[2-3][^>]*>([^<]+)<\/h[2-3]>/);
-
             if (urlMatch && titleMatch) {
                 let rawUrl = urlMatch[1];
                 if (!rawUrl.startsWith('http')) rawUrl = MAIN_URL + rawUrl;
                 const rawTitle = titleMatch[1].replace('Watch Online', '').trim();
-                
                 if (rawUrl.includes('/movies/') || rawUrl.includes('/series/')) {
                     results.push({ url: rawUrl, title: rawTitle });
                 }
             }
         }
 
-        // --- MATCHING LOGIC ---
         const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
         const target = normalize(title);
         
-        // A. Exact Match
         let match = results.find(r => normalize(r.title) === target);
-
-        // B. Slug Match (Crucial for "Kung Fu Panda 4" -> "kung-fu-panda-4")
         if (!match) {
             const slugTarget = cleanTitle.toLowerCase().replace(/\s+/g, '-');
             match = results.find(r => r.url.toLowerCase().includes(slugTarget));
         }
+        if (!match) match = results.find(r => normalize(r.title).startsWith(target));
 
-        // C. Starts With / Fuzzy (Crucial for short titles like "Ben 10")
-        if (!match) {
-            match = results.find(r => normalize(r.title).startsWith(target));
-        }
-
-        if (!match) {
-            console.log(`[ToonStream] No match found.`);
-            return [];
-        }
-
+        if (!match) return [];
         let contentUrl = match.url;
-        console.log(`[ToonStream] Selected: ${match.title}`);
 
-        // ==========================================================
-        // 3. HANDLE TV EPISODES
-        // ==========================================================
+        // 2. TV EPISODE LOGIC
         if (mediaType === 'tv') {
             const pageHtml = await req(contentUrl);
-            
-            // Extract Season ID and Post ID
             const seasonRegex = new RegExp(`data-post="([^"]+)"[^>]*data-season="([^"]+)"[^>]*>.*?Season\\s*${season}\\b`, 'i');
             const sMatch = pageHtml.match(seasonRegex);
 
-            if (!sMatch) {
-                console.log(`[ToonStream] Season ${season} not found.`);
-                return [];
-            }
+            if (!sMatch) return [];
 
             const postId = sMatch[1];
             const seasonId = sMatch[2];
-
             const ajaxUrl = `${MAIN_URL}/wp-admin/admin-ajax.php`;
             const formData = `action=action_select_season&season=${seasonId}&post=${postId}`;
             
@@ -109,10 +72,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 body: formData
             });
 
-            // Match "1x1", "01x01", or just "Episode 1" if number is explicit
             const epRegex = /<span class="num-epi">(\d+)x(\d+)<\/span>[\s\S]*?<a href="([^"]+)"/gi;
             let epMatch, foundEpUrl = null;
-            
             while ((epMatch = epRegex.exec(ajaxHtml)) !== null) {
                 if (parseInt(epMatch[1]) == season && parseInt(epMatch[2]) == episode) {
                     foundEpUrl = epMatch[3];
@@ -120,56 +81,69 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 }
             }
 
-            if (!foundEpUrl) {
-                console.log(`[ToonStream] Episode ${season}x${episode} not found.`);
-                return [];
-            }
+            if (!foundEpUrl) return [];
             contentUrl = foundEpUrl;
         }
 
-        // ==========================================================
-        // 4. EXTRACT PLAYERS
-        // ==========================================================
-        console.log(`[ToonStream] Scraping: ${contentUrl}`);
+        // 3. EXTRACT PLAYERS
         const playerHtml = await req(contentUrl);
-        
         const embedRegex = /(?:data-src|src)="([^"]*toonstream\.one\/home\/\?trembed=[^"]+)"/gi;
         const matches = [...playerHtml.matchAll(embedRegex)];
         
-        console.log(`[ToonStream] Found ${matches.length} embeds`);
         const streams = [];
-        
-        // Limit to first 12 embeds to prevent timeout
-        for (const m of matches.slice(0, 12)) {
+        const processedUrls = new Set();
+
+        for (const m of matches.slice(0, 16)) {
             try {
                 const embedUrl = m[1].replace(/&#038;/g, '&');
                 const realUrl = await resolveRedirect(embedUrl, contentUrl);
-                if (!realUrl) continue;
-
+                
+                if (!realUrl || processedUrls.has(realUrl)) continue;
+                processedUrls.add(realUrl);
+                
                 let extracted = false;
 
-                // A. Native AWS/Zephyr Extraction
+                // A. AWSStream / Zephyr
                 if (realUrl.includes('awstream') || realUrl.includes('zephyrflick')) {
-                    const awsLink = await extractAWSStream(realUrl);
-                    if (awsLink) { streams.push(awsLink); extracted = true; }
-                }
-                
-                // B. StreamRuby Extraction
-                if (!extracted && realUrl.includes('streamruby')) {
-                    const rubyLinks = await extractStreamRuby(realUrl);
-                    if (rubyLinks.length > 0) { streams.push(...rubyLinks); extracted = true; }
+                    const res = await extractAWSStream(realUrl);
+                    if (res) { streams.push(res); extracted = true; }
                 }
 
-                // C. Generic Fallback (VidHide, Turboviplay, etc)
-                if (!extracted) {
-                    const genericLinks = await extractGeneric(realUrl);
-                    if (genericLinks.length > 0) { streams.push(...genericLinks); }
+                // B. VidStack API (Cloudy, StreamUp) - Now with 'r' param
+                if (!extracted && (realUrl.includes('cloudy') || realUrl.includes('strmup'))) {
+                    const res = await extractVidStackAPI(realUrl);
+                    if (res && res.length > 0) {
+                        streams.push(...res);
+                        extracted = true;
+                    }
                 }
-                
-                // D. Iframe Fallback (Last Resort)
+
+                // C. StreamRuby
+                if (!extracted && (realUrl.includes('rubystm') || realUrl.includes('streamruby'))) {
+                    const cleanUrl = realUrl.replace('/e/', '/').replace('.html', '');
+                    const genericLinks = await extractUniversal(cleanUrl);
+                    if (genericLinks.length > 0) {
+                        streams.push(...genericLinks);
+                        extracted = true;
+                    }
+                }
+
+                // D. GDMirror (New Script Scraper)
+                if (!extracted && realUrl.includes('gdmirror')) {
+                    const res = await extractUniversal(realUrl);
+                    if (res.length > 0) {
+                        streams.push(...res);
+                        extracted = true;
+                    }
+                }
+
+                // E. Universal Fallback
                 if (!extracted) {
-                     const host = new URL(realUrl).hostname.replace('www.', '');
-                     streams.push({ name: "ToonStream [Embed]", title: host, type: "iframe", url: realUrl });
+                    const genericLinks = await extractUniversal(realUrl);
+                    if (genericLinks.length > 0) {
+                        streams.push(...genericLinks);
+                        extracted = true;
+                    }
                 }
 
             } catch (err) { }
@@ -178,7 +152,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         return streams;
 
     } catch (e) {
-        console.error(`[ToonStream] Error: ${e.message}`);
         return [];
     }
 }
@@ -188,7 +161,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 // ==========================================================
 
 async function req(url, opts = {}) {
-    const headers = { 'User-Agent': USER_AGENT, 'Referer': MAIN_URL, ...opts.headers };
+    const headers = { 
+        'User-Agent': USER_AGENT, 
+        'Referer': MAIN_URL, 
+        ...opts.headers 
+    };
     const response = await fetch(url, { ...opts, headers });
     return response.ok ? response.text() : null;
 }
@@ -213,41 +190,108 @@ async function extractAWSStream(url) {
         });
         const json = JSON.parse(jsonText);
         if (json && json.videoSource && json.videoSource !== '0') {
-            return { name: "ToonStream [AWS]", title: "1080p (Fast)", type: "url", url: json.videoSource };
+            return { name: "ToonStream [AWS]", title: "1080p", type: "url", url: json.videoSource };
         }
     } catch (e) { return null; }
 }
 
-async function extractStreamRuby(url) {
-    try {
-        const cleanUrl = url.replace('/e/', '/'); 
-        const html = await req(cleanUrl);
-        const match = html.match(/file:\s*"([^"]+\.m3u8[^"]*)"/);
-        if (match) return [{ name: "ToonStream [Ruby]", title: "Auto", type: "url", url: match[1] }];
-    } catch (e) { return []; }
-    return [];
-}
-
-async function extractGeneric(url) {
+async function extractVidStackAPI(url) {
     const res = [];
     try {
-        const html = await req(url);
-        if (!html) return [];
-        const packerRegex = /(eval\(function\(p,a,c,k,e,d\)[\s\S]*?\.split\('\|'\)\)\))/;
-        const packed = html.match(packerRegex);
-        let content = html;
-        if (packed) {
-            const unpacked = unpack(packed[1]);
-            if (unpacked) content += unpacked;
+        const u = new URL(url);
+        // Extract ID: cloudy.upns.one/#ptia8 -> ptia8
+        let id = u.hash.replace('#', '') || u.pathname.split('/').pop();
+        
+        const apiUrl = `${u.origin}/api/source/${id}`;
+        
+        // V10 FIX: Add 'r' (Referer) to body. Critical for Cloudy/StreamUp.
+        const body = new URLSearchParams();
+        body.append('r', url); 
+        body.append('d', u.hostname);
+
+        const jsonText = await req(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body
+        });
+
+        const json = JSON.parse(jsonText);
+        if (json && json.data && Array.isArray(json.data)) {
+            json.data.forEach(item => {
+                if (item.file && (item.file.includes('.m3u8') || item.type === 'hls')) {
+                     res.push({ 
+                        name: `ToonStream [${u.hostname.replace('www.','').split('.')[0]}]`, // e.g. [cloudy]
+                        title: item.label || "Auto", 
+                        type: "url", 
+                        url: item.file,
+                        headers: { "Referer": url }
+                    });
+                }
+            });
         }
-        const m3u8Regex = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/gi;
+    } catch (e) { }
+    return res;
+}
+
+async function extractUniversal(url) {
+    const res = [];
+    try {
+        const headers = { 'Referer': url, 'Origin': new URL(url).origin };
+        const html = await req(url, { headers });
+        if (!html) return [];
+        
+        let content = html;
+        let packedCount = 0;
+        
+        while (packedCount < 5) {
+            const packerRegex = /(eval\(function\(p,a,c,k,e,d\)[\s\S]*?\.split\('\|'\)\)\))/;
+            const packed = content.match(packerRegex);
+            if (packed) {
+                const unpacked = unpack(packed[1]);
+                if (unpacked && unpacked !== content) {
+                    content = unpacked;
+                    packedCount++;
+                } else break;
+            } else break;
+        }
+
+        const urlRegex = /["'](?<url>https?:\\?\/\\?\/[^"']+\.m3u8[^"']*|[^"']+\.m3u8[^"']*)["']/gi;
+        const host = new URL(url).hostname.replace('www.', '');
         let m;
-        while ((m = m3u8Regex.exec(content)) !== null) {
-            const link = m[1].replace(/\\/g, '');
+
+        while ((m = urlRegex.exec(content)) !== null) {
+            let link = m.groups.url || m[1];
+            link = link.replace(/\\/g, '');
+
+            // Relative path fix
+            if (!link.startsWith('http')) {
+                const u = new URL(url);
+                if (link.startsWith('/')) {
+                    link = u.origin + link;
+                } else {
+                    const basePath = url.substring(0, url.lastIndexOf('/') + 1);
+                    link = basePath + link;
+                }
+            }
+
             if (!res.some(r => r.url === link) && !link.includes('red/pixel')) {
-                res.push({ name: "ToonStream [HLS]", title: "Auto", type: "url", url: link });
+                let name = "ToonStream [HLS]";
+                if (host.includes('vidmoly')) name = "ToonStream [VidMoly]";
+                else if (host.includes('strmup')) name = "ToonStream [StreamUp]";
+                else if (host.includes('cloudy')) name = "ToonStream [Cloudy]";
+                else if (host.includes('ruby')) name = "ToonStream [Ruby]";
+                else if (host.includes('gdmirror')) name = "ToonStream [GDMirror]";
+
+                res.push({ 
+                    name: name, 
+                    title: "Auto", 
+                    type: "url", 
+                    url: link,
+                    headers: headers 
+                });
             }
         }
+
     } catch (e) {}
     return res;
 }
@@ -262,7 +306,6 @@ function unpack(p) {
     } catch (e) { return null; }
 }
 
-// Export for Nuvio
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
